@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Council">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<title>Investment Council</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:'DM Sans',sans-serif;background:#111;color:#ccc;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px}
+.hdr{padding:max(env(safe-area-inset-top,12px),12px) 16px 14px;border-bottom:1px solid #1d1d1d;background:#151515;flex-shrink:0}
+.hdr-top{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.logo{width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#2D4A3E,#3B6BA5,#8B5E3C);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.ttl{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#e8e8e8}
+.sub{font-size:11px;color:#777;margin-top:1px}
+.cbtn{padding:5px 10px;border-radius:6px;font-size:10px;background:#1a1a1a;border:1px solid #2a2a2a;color:#666;cursor:pointer;text-transform:uppercase;font-family:inherit}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+.tab{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1.5px solid #252525;background:#171717;color:#666;font-size:12px;cursor:pointer;font-family:inherit;flex-shrink:0;transition:all .2s}
+.tab.on{font-weight:600}
+.msgs{flex:1;overflow-y:auto;padding:16px;-webkit-overflow-scrolling:touch}
+.mu{display:flex;justify-content:flex-end;margin-bottom:14px}
+.mb{max-width:82%;padding:12px 16px;border-radius:18px 18px 4px 18px;background:linear-gradient(135deg,#2A2A2A,#363636);color:#e0e0e0;font-size:14px;line-height:1.6;border:1px solid #444}
+.mt{display:flex;gap:4px;justify-content:flex-end;margin-bottom:5px}
+.tg{font-size:10px;padding:2px 6px;border-radius:5px;font-weight:600}
+.cd{background:#1a1a1a;border-radius:14px;padding:14px 16px;margin-bottom:10px;border:1px solid;animation:fi .3s ease}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.ch{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.ci{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.cn{font-size:13px;font-weight:600}
+.ce{font-size:10px;padding:2px 6px;border-radius:4px;background:#A55B5B20;color:#C87070;font-weight:600}
+.ct{font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.ct.err{color:#C89090;font-size:12px;font-family:'Courier New',monospace}
+.fb{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:3px 8px;border-radius:5px;background:#C4A44A15;color:#C4A44A;font-weight:600;margin-bottom:10px}
+.dots{display:flex;gap:5px;padding:6px 0}
+.dot{width:6px;height:6px;border-radius:50%;animation:dp 1.4s ease-in-out infinite}
+@keyframes dp{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1.15)}}
+.wel{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:20px;padding:0 8px}
+.ar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.ac{width:145px;padding:12px;border-radius:12px;background:#171717;text-align:center}
+.aci{width:36px;height:36px;border-radius:9px;margin:0 auto 6px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.an{font-size:12px;font-weight:600;color:#ddd;margin-bottom:2px}
+.ad{font-size:10px;color:#777;line-height:1.3}
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:500px;width:100%}
+.sb{background:#171717;border:1px solid #252525;border-radius:10px;padding:11px 12px;color:#999;font-size:12px;font-family:inherit;cursor:pointer;text-align:left;line-height:1.4;transition:all .15s}
+.sb:active{background:#1f1f1f;border-color:#C4A44A40}
+.ina{padding:10px 16px max(env(safe-area-inset-bottom,14px),14px);border-top:1px solid #1d1d1d;background:#131313;flex-shrink:0}
+.ir{display:flex;gap:8px;align-items:center;background:#1a1a1a;border:1px solid #252525;border-radius:14px;padding:4px 5px 4px 14px}
+.ir:focus-within{border-color:#C4A44A60}
+.mbg{display:flex;align-items:center;gap:3px;padding:4px 8px 4px 4px;border-radius:6px;flex-shrink:0;font-size:11px}
+input[type=text]{flex:1;background:0;border:0;outline:0;color:#d4d4d4;font-size:14px;font-family:inherit;padding:11px 0}
+input::placeholder{color:#555}
+.snd{width:38px;height:38px;border-radius:10px;border:0;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;cursor:pointer;transition:background .2s}
+.snd:disabled{background:#222!important;color:#555!important;cursor:default}
+.disc{text-align:center;font-size:10px;color:#3a3a3a;margin-top:6px}
+.hint{padding:8px 16px;border-radius:8px;background:#171717;border:1px solid #252525;font-size:12px;color:#888;text-align:center;max-width:500px;width:100%}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-top">
+    <div class="logo">🏛️</div>
+    <div style="flex:1"><div class="ttl">Investment Council</div><div class="sub">Three minds + financial data</div></div>
+    <button class="cbtn" id="cb" style="display:none" onclick="cc()">Clear</button>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</div>
+<div class="msgs" id="msgs"></div>
+<div class="ina">
+  <div class="ir">
+    <div class="mbg" id="mbg"></div>
+    <input type="text" id="inp" placeholder="Ask the council..." autocomplete="off">
+    <button class="snd" id="snd" disabled onclick="go()">↑</button>
+  </div>
+  <div class="disc">Powered by Claude · Not financial advice</div>
+</div>
+<script>
+const A={analyst:{n:"Systematic Analyst",s:"Analyst",i:"📊",c:"#4A7C5C",g:"linear-gradient(135deg,#2D4A3E,#4A7C5C)"},buffett:{n:"Warren Buffett",s:"Buffett",i:"🎩",c:"#3B6BA5",g:"linear-gradient(135deg,#2A4F7A,#3B6BA5)"},munger:{n:"Charlie Munger",s:"Munger",i:"📚",c:"#8B5E3C",g:"linear-gradient(135deg,#6B4226,#8B5E3C)"}};
+const K=["analyst","buffett","munger"];
+const SG=["Is the AI boom a bubble or structural shift?","Build me a resilient portfolio for the next decade","What are the strongest competitive moats today?","How should I think about nuclear energy investments?","What's the biggest risk investors are ignoring?","Evaluate $AAPL as a long-term investment"];
+const TICKERS=["AAPL","MSFT","NVDA","GOOGL","AMZN","TSLA","META","AVGO","TSM","LLY","MELI","COST","AMD","INTC","QCOM","V","MA","JPM","UNH","XOM","JNJ","PG","KO","PEP","WMT","NFLX","CRM","ASML","MRK","ABBV"];
+
+let mode="all",hist=[],busy=false;
+const $=id=>document.getElementById(id);
+
+function init(){rt();rm();$("inp").addEventListener("input",us);$("inp").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.isComposing)go()});
+if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{})}
+
+function rt(){
+  let h=tb("all","⚡","Ask All","#C4A44A");
+  K.forEach(k=>{const a=A[k];h+=tb(k,a.i,a.s,a.c)});
+  $("tabs").innerHTML=h;ub()
+}
+function tb(m,icon,label,color){
+  const on=mode===m;
+  return`<button class="tab${on?" on":""}" style="border-color:${on?color+"60":"#252525"};background:${on?color+"14":"#171717"};color:${on?(m==="all"?"#E8E0C8":"#E8E8E8"):"#666"}" onclick="sm('${m}')"><span style="font-size:14px">${icon}</span> ${label}</button>`
+}
+function sm(m){mode=m;rt();if(!hist.length)rm()}
+function ub(){
+  const mc=mode==="all"?"#C4A44A":A[mode]?.c||"#888";
+  const b=$("mbg");b.style.background=mc+"15";
+  b.innerHTML=mode==="all"?K.map(k=>`<span>${A[k].i}</span>`).join(""):`<span style="font-size:13px">${A[mode].i}</span>`;
+  $("inp").placeholder=mode==="all"?"Ask all three advisors...":`Ask ${A[mode].n}...`
+}
+function us(){
+  const v=$("inp").value.trim(),b=$("snd"),mc=mode==="all"?"linear-gradient(135deg,#8B7A2A,#C4A44A)":A[mode]?.g;
+  b.disabled=!v||busy;b.style.background=v&&!busy?mc:"#222";b.style.color=v&&!busy?"#FFF":"#555"
+}
+
+function detectTicker(text){
+  const m1=text.match(/\$([A-Z]{1,5})\b/);
+  if(m1)return m1[1];
+  const re=new RegExp("\\b("+TICKERS.join("|")+")\\b","i");
+  const m2=text.match(re);
+  return m2?m2[1].toUpperCase():""
+}
+
+async function go(pf){
+  const inp=$("inp"),txt=pf||inp.value.trim();
+  if(!txt||busy)return;
+  const tgts=mode==="all"?K:[mode];
+  busy=true;inp.value="";us();
+
+  const tk=detectTicker(txt);
+  hist.push({t:"u",x:txt,tgts});
+  const le={t:"r",d:{}};tgts.forEach(k=>{le.d[k]={l:true,x:"",e:false}});
+  if(tk)le.tk=tk;
+  hist.push(le);rm();$("cb").style.display="block";
+
+  try{
+    const ep=tk?"/api/research":"/api/ask";
+    const body={question:txt,advisors:tgts};
+    if(tk)body.ticker=tk;
+    const r=await fetch(ep,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.error){tgts.forEach(k=>{le.d[k]={l:false,x:d.error,e:true}})}
+    else{for(const k of tgts){const v=d.results[k];le.d[k]=v?{l:false,x:v.text,e:!v.ok}:{l:false,x:"No response",e:true}}
+    if(d.financialContext)le.fc=d.financialContext}
+  }catch(e){tgts.forEach(k=>{le.d[k]={l:false,x:"Connection error: "+e.message+"\n\nMake sure you're online and the server is running.",e:true}})}
+  busy=false;us();rm();inp.focus()
+}
+
+function cc(){hist=[];$("cb").style.display="none";rm()}
+
+function rm(){
+  const el=$("msgs");
+  if(!hist.length){el.innerHTML=rw();return}
+  let h="";
+  for(const e of hist){
+    if(e.t==="u"){
+      h+=`<div class="mu"><div style="max-width:82%">`;
+      if(e.tgts.length>1)h+=`<div class="mt">${e.tgts.map(t=>`<span class="tg" style="background:${A[t].c}20;color:${A[t].c}">${A[t].i} ${A[t].s}</span>`).join("")}</div>`;
+      h+=`<div class="mb">${esc(e.x)}</div></div></div>`
+    }
+    if(e.t==="r"){
+      h+=`<div style="margin-bottom:18px;max-width:92%">`;
+      if(e.fc)h+=`<div class="fb">🔬 Dexter pulled financial data${e.tk?" for "+e.tk:""}</div>`;
+      for(const[k,v]of Object.entries(e.d)){const a=A[k];
+        h+=`<div class="cd" style="border-color:${v.e?"#7A3A3A":a.c+"30"}"><div class="ch"><div class="ci" style="background:${a.g}">${a.i}</div><span class="cn" style="color:${v.e?"#C87070":a.c}">${a.n}</span>${v.e?'<span class="ce">ERROR</span>':""}</div>`;
+        if(v.l)h+=`<div class="dots"><div class="dot" style="background:${a.c}"></div><div class="dot" style="background:${a.c};animation-delay:.2s"></div><div class="dot" style="background:${a.c};animation-delay:.4s"></div></div>`;
+        else h+=`<div class="ct${v.e?" err":""}">${formatText(v.x)}</div>`;
+        h+=`</div>`}
+      h+=`</div>`
+    }
+  }
+  el.innerHTML=h;setTimeout(()=>{el.scrollTop=el.scrollHeight},50)
+}
+
+function rw(){
+  let h=`<div class="wel"><div class="ar">${K.map(k=>{const a=A[k];return`<div class="ac" style="border:1px solid ${a.c}25"><div class="aci" style="background:${a.g}">${a.i}</div><div class="an">${a.n}</div><div class="ad">${k==="analyst"?"Macro, sectors, valuation, risk":k==="buffett"?"Moats, compounding, patience":"Mental models, inversion, honesty"}</div></div>`}).join("")}</div>`;
+  h+=`<div class="hint">💡 Mention a ticker like <strong>$AAPL</strong> or <strong>$TSM</strong> to auto-pull financial data via Dexter</div>`;
+  h+=`<div class="sg">${SG.map(q=>`<button class="sb" onclick="go('${q.replace(/'/g,"\\'")}')">${q}</button>`).join("")}</div></div>`;
+  return h
+}
+
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function formatText(s){
+  let t=esc(s);
+  t=t.replace(/\*\*(.+?)\*\*/g,'<strong style="color:#e0e0e0">$1</strong>');
+  t=t.replace(/\n/g,"<br>");
+  return t
+}
+
+init()
+</script>
+</body>
+</html>
