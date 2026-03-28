@@ -227,6 +227,9 @@ $env:QT_QPA_PLATFORM="offscreen"; python -m pytest tests\test_integration_gui.py
 5. Preparar simulação: `simulation_ready` com instância válida
 6. Reset: valores de fábrica restaurados
 7. Tabs de visualização: QTabWidget com 3 tabs correctos
+8. K_nomoto e r_max: presentes na GUI com valores válidos
+9. zeta_roll e zeta_pitch: presentes com valores padrão (0.3, 0.8)
+10. Dependência geométrica: aumentar L aumenta a massa calculada
 
 ### Todos os testes
 
@@ -240,7 +243,7 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/ -v
 set QT_QPA_PLATFORM=offscreen && python -m pytest tests\ -v
 ```
 
-Resultado esperado: **36 passed**.
+Resultado esperado: **39 passed**.
 
 ---
 
@@ -308,7 +311,7 @@ PythonVehicleSimulator/
 │       └── main_gui.py            ← Ponto de entrada (QApplication)
 ├── tests/
 │   ├── test_torpedo_model.py      ← 16 testes unitários do model
-│   └── test_integration_gui.py   ← 7 testes de integração GUI
+│   └── test_integration_gui.py   ← 10 testes de integração GUI
 ├── requirements_gui.txt           ← Dependências da GUI
 └── log_etapa2_ricardo_craveiro.md ← Log de utilização de IA
 ```
