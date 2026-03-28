@@ -188,6 +188,10 @@ class TorpedoGUI(QMainWindow):
              'Factor de inércia em rolamento (—)\nLimites: 0.1 – 0.5'),
             ('T_surge', 'T_surge', 's',   0.01, 1000.0,  1.0, 2, False,
              'Constante de tempo em avanço (s)\nLimites: 0.01 – 1000.0 s'),
+            ('zeta_roll',  'ζ_roll',  '—', 0.0, 1.0, 0.01, 3, False,
+             'Amortecimento relativo em rolamento (—)\nLimites: 0.0 – 1.0'),
+            ('zeta_pitch', 'ζ_pitch', '—', 0.0, 1.0, 0.01, 3, False,
+             'Amortecimento relativo em arfagem (—)\nLimites: 0.0 – 1.0'),
         ]
         self._add_spinboxes(form, specs)
         return box
@@ -263,6 +267,10 @@ class TorpedoGUI(QMainWindow):
         specs = [
             ('T_yaw',    'T_yaw',   's',     0.01, 1000.0, 1.0,  2, False,
              'Constante de tempo em guinada (s) — actualiza T_nomoto automaticamente (acoplamento A8)\nLimites: 0.01 – 1000.0 s'),
+            ('K_nomoto', 'K_nomoto', '—',   0.001, 10.0,  0.001, 4, False,
+             'Ganho de Nomoto K (—)\nK = r_max / δ_max  (Fossen 2021, §16.3)\nLimites: > 0'),
+            ('r_max',    'r_max',   'rad/s', 0.001, 1.0,  0.001, 4, False,
+             'Taxa máxima de guinada permitida (rad/s)\nLimites: > 0  (padrão ≈ 0.087 rad/s = 5 °/s)'),
             ('wn_d',    'ωn_d',    'rad/s', 0.001, 10.0,  0.001, 4, False,
              'Frequência natural do modelo de referência de rumo (rad/s)\nLimites: 0.001 – 10.0 rad/s'),
             ('zeta_d',  'ζd',      '—',     0.5,   2.0,   0.01,  3, False,
@@ -474,6 +482,17 @@ class TorpedoGUI(QMainWindow):
             self._controller.get_current_params().get('ref_psi', 0.0)))
         layout.addRow("Rumo desejado:", sb_psi)
 
+        # Propeller RPM reference
+        _params = self._controller.get_current_params()
+        _n_max = float(_params.get('thruster_nMax', 1525.0))
+        sb_n = QDoubleSpinBox()
+        sb_n.setRange(0.0, _n_max)
+        sb_n.setSingleStep(10.0)
+        sb_n.setDecimals(0)
+        sb_n.setSuffix("  RPM")
+        sb_n.setValue(float(_params.get('ref_n', 0.0)))
+        layout.addRow("Rotação desejada:", sb_n)
+
         # Duration
         sb_dur = QDoubleSpinBox()
         sb_dur.setRange(5.0, 300.0)
@@ -494,6 +513,7 @@ class TorpedoGUI(QMainWindow):
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._sim_duration = sb_dur.value()
+            self._controller.update_param('ref_n', sb_n.value())
             self._controller.prepare_simulation(
                 combo.currentText(),
                 sb_z.value(),

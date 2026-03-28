@@ -161,3 +161,47 @@ def test_reset_restores_defaults(mvc):
     assert reset_params, "params_updated not emitted after reset"
     p = reset_params[-1]
     assert abs(p.get("L", -1) - 1.6) < 1e-6, f"L after reset = {p.get('L')}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 8 — K_nomoto e r_max expostos na GUI
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_nomoto_and_rmax_in_gui(mvc):
+    """K_nomoto e r_max devem estar registados como widgets na GUI."""
+    ctrl, gui, app = mvc
+    assert "K_nomoto" in gui.param_widgets, "K_nomoto não encontrado em param_widgets"
+    assert "r_max"    in gui.param_widgets, "r_max não encontrado em param_widgets"
+    # Devem ter valores válidos (diferentes de zero)
+    assert gui.param_widgets["K_nomoto"].value() > 0
+    assert gui.param_widgets["r_max"].value() > 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 9 — zeta_roll e zeta_pitch expostos na GUI
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_roll_pitch_damping_in_gui(mvc):
+    """zeta_roll e zeta_pitch devem estar registados como widgets na GUI."""
+    ctrl, gui, app = mvc
+    assert "zeta_roll"  in gui.param_widgets, "zeta_roll não encontrado em param_widgets"
+    assert "zeta_pitch" in gui.param_widgets, "zeta_pitch não encontrado em param_widgets"
+    # Valores predefinidos: 0.3 e 0.8
+    assert abs(gui.param_widgets["zeta_roll"].value()  - 0.3) < 1e-6
+    assert abs(gui.param_widgets["zeta_pitch"].value() - 0.8) < 1e-6
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 10 — Dependência geométrica: L → massa
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_geometry_dependency_mass(mvc):
+    """Aumentar L deve aumentar a massa calculada (_recalculate_derived)."""
+    ctrl, gui, app = mvc
+    original_mass = ctrl._model.massa
+    ctrl.update_param("L", 2.0)   # maior L → maior massa
+    app.processEvents()
+    new_mass = ctrl._model.massa
+    assert new_mass > original_mass, (
+        f"Massa devia ter aumentado: {original_mass:.4f} → {new_mass:.4f}"
+    )
