@@ -20,6 +20,9 @@ Guia de instalação, execução e teste da interface gráfica MVC para o torped
 # Clonar o repositório
 git clone https://github.com/ricardocraveir5/PythonVehicleSimulator.git
 cd PythonVehicleSimulator
+
+# Mudar para o branch da Etapa 2
+git checkout claude/torpedo-parameter-inventory-vtoPN
 ```
 
 **(Recomendado) Criar ambiente virtual:**
