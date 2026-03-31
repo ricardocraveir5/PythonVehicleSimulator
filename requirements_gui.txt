@@ -1,0 +1,13 @@
+# requirements_gui.txt
+# Runtime dependencies for the Torpedo AUV parameter-editor GUI
+# Compatible with Python >= 3.10
+#
+# Install with:
+#   pip install -r requirements_gui.txt
+
+# Qt6 Python bindings
+PyQt6>=6.4.0
+
+# Scientific / numerical stack (already required by the simulator core)
+numpy>=1.23.0
+matplotlib>=3.6.0
