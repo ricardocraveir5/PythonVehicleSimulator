@@ -2,16 +2,18 @@
 torpedo_viz.py — 3D visualisation and state plots for the Torpedo AUV GUI.
 
 Provides:
-  SimulationThread    — runs mainLoop.simulate() in a QThread (non-blocking)
-  TorpedoVizWidget    — embedded 3D animation; camera follows the torpedo
-  TorpedoStatesWidget — embedded static 3×3 state time-series subplots
+  SimulationThread       — runs mainLoop.simulate() in a QThread (non-blocking)
+  TorpedoVizWidget       — embedded 3D animation; camera follows the torpedo
+  TorpedoStatesWidget    — embedded static 3×3 state time-series subplots
+  TorpedoControlsWidget  — control command vs. actual time-series (Etapa 3)
+  ComparativeWidget      — overlay two simulation runs for comparison (Etapa 3)
 
 Dependências: PyQt6, matplotlib (já incluídos em requirements_gui.txt).
 Sem novas dependências externas.
 
 Referência: T. I. Fossen, Handbook of Marine Craft Hydrodynamics and Motion
             Control, 2ª ed., Wiley, 2021.
-Autor das adições: Ricardo Craveiro (1191000@isep.ipp.pt) — DINAV 2026 Etapa 2
+Autor das adições: Ricardo Craveiro (1191000@isep.ipp.pt) — DINAV 2026 Etapa 2/3
 """
 
 import math
@@ -361,5 +363,193 @@ class TorpedoStatesWidget(QWidget):
                 ax.tick_params(labelsize=6)
                 ax.grid(True, alpha=0.3, lw=0.5)
 
+        self._fig.tight_layout(pad=1.2)
+        self._canvas.draw()
+
+
+# ---------------------------------------------------------------------------
+# TorpedoControlsWidget  (Etapa 3)
+# ---------------------------------------------------------------------------
+
+class TorpedoControlsWidget(QWidget):
+    """
+    Gráficos de sinais de controlo: comando vs. valor real (actuator dynamics).
+
+    Layout: 3 linhas × 2 colunas:
+      Linha 1 — Leme de topo (cmd vs actual), Leme de fundo
+      Linha 2 — Stern plane estibordo, Stern plane bombordo
+      Linha 3 — RPM propulsor, (vazio ou reservado)
+
+    Chame plot_controls() após a simulação terminar.
+    """
+
+    _LABELS = [
+        ("Top Rudder δ_r_top",    "rad"),
+        ("Bottom Rudder δ_r_bot", "rad"),
+        ("Star Stern δ_s_star",   "rad"),
+        ("Port Stern δ_s_port",   "rad"),
+        ("Propeller n",           "RPM"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._fig    = Figure(figsize=(7, 6), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+
+        axs = self._fig.subplots(3, 2)
+        for ax in axs.flat:
+            ax.set_visible(False)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._canvas)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+
+    def plot_controls(self, simTime: np.ndarray, simData: np.ndarray,
+                      dimU: int = 5) -> None:
+        """
+        Renderiza gráficos de sinais de controlo.
+
+        Parâmetros
+        ----------
+        simTime : (N, 1) array
+        simData : (N, 2*DOF + 2*dimU) array
+        dimU : int — número de entradas de controlo (default 5)
+        """
+        t = simTime[:, 0]
+        DOF = 6
+        cmd_start = 2 * DOF           # u_control starts at col 12
+        act_start = 2 * DOF + dimU    # u_actual starts at col 17
+
+        self._fig.clear()
+        axs = self._fig.subplots(3, 2)
+
+        for i in range(dimU):
+            r, c = divmod(i, 2)
+            ax = axs[r][c]
+            label, unit = self._LABELS[i]
+
+            cmd = simData[:, cmd_start + i]
+            act = simData[:, act_start + i]
+
+            # Convert rad → deg for fin angles (not RPM)
+            if unit == "rad":
+                cmd = np.degrees(cmd)
+                act = np.degrees(act)
+                unit = "°"
+
+            ax.plot(t, cmd, color='#2980b9', lw=1.2, alpha=0.7,
+                    label="Comando")
+            ax.plot(t, act, color='#e74c3c', lw=1.2, alpha=0.9,
+                    label="Actual")
+            ax.set_title(label, fontsize=8, pad=3)
+            ax.set_ylabel(f"{unit}", fontsize=7)
+            ax.set_xlabel("t (s)", fontsize=7)
+            ax.tick_params(labelsize=6)
+            ax.grid(True, alpha=0.3, lw=0.5)
+            ax.legend(fontsize=6, loc='upper right')
+            ax.set_visible(True)
+
+        # Hide unused subplot (last slot if dimU is odd)
+        if dimU % 2 == 1:
+            axs[dimU // 2][1].set_visible(False)
+
+        self._fig.tight_layout(pad=1.2)
+        self._canvas.draw()
+
+
+# ---------------------------------------------------------------------------
+# ComparativeWidget  (Etapa 3)
+# ---------------------------------------------------------------------------
+
+class ComparativeWidget(QWidget):
+    """
+    Sobreposição de duas simulações para análise comparativa.
+
+    Mostra grelha 3×3 (mesma disposição que TorpedoStatesWidget) com as
+    curvas de ambas as simulações em cores distintas. Inclui legenda com
+    os rótulos configuráveis.
+    """
+
+    _SPECS = TorpedoStatesWidget._SPECS
+    _COLORS_A = ['#1f77b4', '#ff7f0e', '#2ca02c',
+                 '#9467bd', '#8c564b', '#e377c2',
+                 '#d62728', '#17becf', '#bcbd22']
+    _COLORS_B = ['#aec7e8', '#ffbb78', '#98df8a',
+                 '#c5b0d5', '#c49c94', '#f7b6d2',
+                 '#ff9896', '#9edae5', '#dbdb8d']
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self._fig    = Figure(figsize=(7, 6), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+
+        axs = self._fig.subplots(3, 3)
+        for ax in axs.flat:
+            ax.set_visible(False)
+
+        self._info = QLabel("Execute duas simulações para comparar.")
+        self._info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._info.setStyleSheet("font-size: 10px; color: #888;")
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._canvas)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._info)
+        layout.addWidget(scroll, stretch=1)
+
+    def plot_comparison(self,
+                        simTime_A: np.ndarray, simData_A: np.ndarray,
+                        simTime_B: np.ndarray, simData_B: np.ndarray,
+                        label_A: str = "Simulação A",
+                        label_B: str = "Simulação B") -> None:
+        """
+        Renderiza sobreposição de duas simulações.
+
+        Parâmetros
+        ----------
+        simTime_A, simData_A : arrays da primeira simulação
+        simTime_B, simData_B : arrays da segunda simulação
+        label_A, label_B : rótulos para a legenda
+        """
+        tA = simTime_A[:, 0]
+        tB = simTime_B[:, 0]
+
+        self._fig.clear()
+        axs = self._fig.subplots(3, 3)
+
+        idx = 0
+        for r, row in enumerate(self._SPECS):
+            for c, (col, title, ylabel, to_deg) in enumerate(row):
+                ax = axs[r][c]
+
+                sigA = simData_A[:, col]
+                sigB = simData_B[:, col]
+                if to_deg:
+                    sigA = np.degrees(sigA)
+                    sigB = np.degrees(sigB)
+
+                ax.plot(tA, sigA, color=self._COLORS_A[idx], lw=1.3,
+                        label=label_A)
+                ax.plot(tB, sigB, color=self._COLORS_B[idx], lw=1.3,
+                        linestyle='--', label=label_B)
+                ax.set_title(title, fontsize=8, pad=3)
+                ax.set_ylabel(ylabel, fontsize=7)
+                ax.set_xlabel("t (s)", fontsize=7)
+                ax.tick_params(labelsize=6)
+                ax.grid(True, alpha=0.3, lw=0.5)
+                ax.legend(fontsize=5, loc='upper right')
+                idx += 1
+
+        self._info.setText(
+            f"Comparação: {label_A} vs {label_B}")
         self._fig.tight_layout(pad=1.2)
         self._canvas.draw()

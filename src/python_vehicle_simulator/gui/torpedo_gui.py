@@ -5,9 +5,12 @@ Part of the MVC architecture for the torpedo vehicle model.
 The View communicates exclusively with the TorpedoController and never
 accesses the torpedo Model directly.
 
+Etapa 3 additions: CSV/JSON export, control signal plots, comparative
+analysis tab, fin_area widgets, simulation store.
+
 Original author: Thor I. Fossen
 Additions:       Ricardo Craveiro (1191000@isep.ipp.pt)
-DINAV 2026 — Etapa 2
+DINAV 2026 — Etapa 2/3
 """
 
 from PyQt6.QtWidgets import (
@@ -16,10 +19,12 @@ from PyQt6.QtWidgets import (
     QStatusBar, QMenuBar, QGroupBox,
     QFormLayout, QDoubleSpinBox, QScrollArea,
     QDialog, QComboBox, QLabel, QDialogButtonBox,
-    QMessageBox,
+    QMessageBox, QFileDialog, QListWidget,
 )
 
-from .torpedo_viz import SimulationThread, TorpedoStatesWidget, TorpedoVizWidget
+from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
+                          TorpedoVizWidget, TorpedoControlsWidget,
+                          ComparativeWidget)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPalette, QColor
 
@@ -91,10 +96,13 @@ class TorpedoGUI(QMainWindow):
         # Button row
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self._btn_reset    = QPushButton("Repor Defaults")
-        self._btn_validate = QPushButton("Validar")
-        self._btn_simulate = QPushButton("Simular")
-        for btn in (self._btn_reset, self._btn_validate, self._btn_simulate):
+        self._btn_reset      = QPushButton("Repor Defaults")
+        self._btn_validate   = QPushButton("Validar")
+        self._btn_simulate   = QPushButton("Simular")
+        self._btn_export_csv = QPushButton("Exportar CSV")
+        self._btn_export_csv.setEnabled(False)
+        for btn in (self._btn_reset, self._btn_validate, self._btn_simulate,
+                    self._btn_export_csv):
             btn_layout.addWidget(btn)
         root_layout.addLayout(btn_layout)
 
@@ -114,6 +122,7 @@ class TorpedoGUI(QMainWindow):
         self._btn_reset.clicked.connect(self._controller.reset_to_defaults)
         self._btn_validate.clicked.connect(self._load_params)
         self._btn_simulate.clicked.connect(self._launch_simulation_dialog)
+        self._btn_export_csv.clicked.connect(self._export_last_csv)
 
         # ------------------------------------------------------------------
         # Initial parameter load
@@ -166,6 +175,14 @@ class TorpedoGUI(QMainWindow):
         self._states_widget = TorpedoStatesWidget()
         tabs.addTab(self._states_widget, "Gráficos de Estado")
 
+        # ── Tab 4: Sinais de Controlo (Etapa 3) ───────────────────────────
+        self._controls_widget = TorpedoControlsWidget()
+        tabs.addTab(self._controls_widget, "Sinais de Controlo")
+
+        # ── Tab 5: Análise Comparativa (Etapa 3) ──────────────────────────
+        self._comparative_widget = ComparativeWidget()
+        tabs.addTab(self._comparative_widget, "Comparação")
+
         return tabs
 
     # -- GroupBox 1: Physical parameters ------------------------------------
@@ -208,12 +225,24 @@ class TorpedoGUI(QMainWindow):
             'Star Stern',
             'Port Stern',
         ]
-        specs = [
-            (f'fin_CL_{i}', fin_labels[i], '—', 0.0, 1.0, 0.01, 3, False,
-             f'Coeficiente de sustentação da barbatana {fin_labels[i]} (—)\nLimites: 0.0 – 1.0')
+        specs_cl = [
+            (f'fin_CL_{i}', f'CL {fin_labels[i]}', '—', 0.0, 1.0, 0.01, 3,
+             False,
+             f'Coeficiente de sustentação da barbatana {fin_labels[i]} (—)\n'
+             f'Limites: 0.0 – 1.0')
             for i in range(4)
         ]
-        self._add_spinboxes(form, specs)
+        self._add_spinboxes(form, specs_cl)
+
+        # Etapa 3: expose fin_area (was missing in Etapa 2)
+        specs_area = [
+            (f'fin_area_{i}', f'Área {fin_labels[i]}', 'm²',
+             0.001, 0.1, 0.001, 5, False,
+             f'Área da barbatana {fin_labels[i]} (m²)\n'
+             f'Limites: 0.001 – 0.1 m²')
+            for i in range(4)
+        ]
+        self._add_spinboxes(form, specs_area)
         return box
 
     # -- GroupBox 3: Thruster ------------------------------------------------
@@ -413,6 +442,7 @@ class TorpedoGUI(QMainWindow):
         """Recebe os dados da simulação e actualiza os widgets de visualização."""
         try:
             self._btn_simulate.setEnabled(True)
+            self._btn_export_csv.setEnabled(True)
             params = self._controller.get_current_params()
             L    = params.get('L',    1.6)
             diam = params.get('diam', 0.19)
@@ -421,12 +451,34 @@ class TorpedoGUI(QMainWindow):
             self._viz_widget.run_animation(simTime, simData, L, diam)
             # Tab 3 — gráficos de estado
             self._states_widget.plot_states(simTime, simData)
+            # Tab 4 — sinais de controlo (Etapa 3)
+            self._controls_widget.plot_controls(simTime, simData, dimU=5)
+
+            # Etapa 3 — store simulation for comparison / export
+            ctrl_mode = params.get('ref_z', '?')
+            n_sim = len(self._controller.get_store()) + 1
+            label = (f"Sim {n_sim} — "
+                     f"z={params.get('ref_z', 0):.0f}m, "
+                     f"ψ={params.get('ref_psi', 0):.0f}°")
+            self._controller.store_simulation(
+                simTime, simData, label=label,
+                metadata={'duration': self._sim_duration})
+
+            # Tab 5 — comparative overlay (if ≥ 2 simulations stored)
+            store = self._controller.get_store()
+            if len(store) >= 2:
+                a, b = store[-2], store[-1]
+                self._comparative_widget.plot_comparison(
+                    a['simTime'], a['simData'],
+                    b['simTime'], b['simData'],
+                    label_A=a['label'], label_B=b['label'])
 
             n_steps = len(simData)
             x_f, y_f, z_f = simData[-1, 0], simData[-1, 1], simData[-1, 2]
             self.statusBar().showMessage(
                 f"Simulação concluída — {n_steps} amostras  |  "
-                f"Posição final: ({x_f:.1f}, {y_f:.1f}, {z_f:.1f}) m")
+                f"Posição final: ({x_f:.1f}, {y_f:.1f}, {z_f:.1f}) m  |  "
+                f"[{len(store)} sim. guardadas]")
         except RuntimeError:
             pass   # widget já destruído (p.ex. durante teardown de testes)
 
@@ -450,6 +502,26 @@ class TorpedoGUI(QMainWindow):
 
         self.statusBar().showMessage(
             f"{nome} actualizado automaticamente para {valor:.4g}")
+
+    def _export_last_csv(self):
+        """Export the most recent simulation to CSV via file dialog."""
+        store = self._controller.get_store()
+        if not store:
+            QMessageBox.warning(self, "Exportar",
+                                "Nenhuma simulação para exportar.")
+            return
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Exportar Simulação",
+            "simulacao_torpedo.csv",
+            "CSV (*.csv);;JSON (*.json);;Todos (*)")
+        if not filepath:
+            return
+        fmt = "json" if filepath.endswith(".json") else "csv"
+        idx = len(store) - 1
+        result = self._controller.export_simulation(idx, filepath, fmt=fmt)
+        if result:
+            self.statusBar().showMessage(
+                f"Exportado: {result.name}  ({fmt.upper()})")
 
     def _launch_simulation_dialog(self):
         """Open a modal dialog to configure and launch simulation."""

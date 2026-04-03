@@ -5,13 +5,20 @@ Connects the View to the Model (torpedo.py) without either knowing
 about the other. Exposes Qt signals for parameter updates, simulation
 readiness, validation errors, and dependency notifications.
 
+Etapa 3 additions: simulation store, CSV/JSON export, comparative analysis.
+
 Original author: Thor I. Fossen
 Additions:       Ricardo Craveiro (1191000@isep.ipp.pt)
-DINAV 2026 — Etapa 2
+DINAV 2026 — Etapa 2/3
 """
 
+from datetime import datetime
+from pathlib import Path
+
 from PyQt6.QtCore import QObject, pyqtSignal
+
 from python_vehicle_simulator.vehicles.torpedo import torpedo
+from python_vehicle_simulator.gui.export_results import export_csv, export_json
 
 
 class TorpedoController(QObject):
@@ -42,11 +49,15 @@ class TorpedoController(QObject):
     simulation_ready        = pyqtSignal(object)
     validation_error        = pyqtSignal(str)
     param_dependency_updated = pyqtSignal(str, float)
+    store_updated           = pyqtSignal(list)        # Etapa 3: list of labels
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._model = torpedo()
         self._last_params = self._model.get_all_params()
+
+        # Etapa 3 — simulation store
+        self._sim_store: list[dict] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -164,6 +175,83 @@ class TorpedoController(QObject):
         self._model = torpedo()
         self._last_params = self._model.get_all_params()
         self.params_updated.emit(self._last_params)
+
+    # ------------------------------------------------------------------
+    # Etapa 3 — Simulation store & export
+    # ------------------------------------------------------------------
+
+    def store_simulation(self, simTime, simData, label: str = "",
+                         metadata: dict | None = None):
+        """
+        Add a simulation result to the internal store.
+
+        Parameters
+        ----------
+        simTime, simData : numpy arrays from mainLoop.simulate()
+        label : str — human-readable label
+        metadata : dict — optional extra info (control_mode, refs, etc.)
+        """
+        if not label:
+            n = len(self._sim_store) + 1
+            label = f"Sim {n}"
+        entry = {
+            'label': label,
+            'simTime': simTime,
+            'simData': simData,
+            'params': self._model.get_all_params(),
+            'metadata': metadata or {},
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+        }
+        self._sim_store.append(entry)
+        self.store_updated.emit(self._store_labels())
+
+    def get_store(self) -> list[dict]:
+        """Return the full simulation store."""
+        return list(self._sim_store)
+
+    def get_store_entry(self, index: int) -> dict | None:
+        """Return a single store entry by index, or None."""
+        if 0 <= index < len(self._sim_store):
+            return self._sim_store[index]
+        return None
+
+    def remove_from_store(self, index: int):
+        """Remove a simulation by index."""
+        if 0 <= index < len(self._sim_store):
+            self._sim_store.pop(index)
+            self.store_updated.emit(self._store_labels())
+
+    def clear_store(self):
+        """Clear all stored simulations."""
+        self._sim_store.clear()
+        self.store_updated.emit([])
+
+    def export_simulation(self, index: int, filepath: str,
+                          fmt: str = "csv") -> Path | None:
+        """
+        Export a stored simulation to CSV or JSON.
+
+        Parameters
+        ----------
+        index : int — index in the store
+        filepath : str — destination file path
+        fmt : 'csv' or 'json'
+
+        Returns
+        -------
+        Path or None
+        """
+        entry = self.get_store_entry(index)
+        if entry is None:
+            self.validation_error.emit("Índice de simulação inválido.")
+            return None
+        params = entry.get('params')
+        fn = export_csv if fmt == "csv" else export_json
+        return fn(filepath, entry['simTime'], entry['simData'],
+                  params=params)
+
+    def _store_labels(self) -> list[str]:
+        return [e['label'] for e in self._sim_store]
 
     # ------------------------------------------------------------------
     # Internal helpers
