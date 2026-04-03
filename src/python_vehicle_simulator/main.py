@@ -10,18 +10,20 @@ URL: https://www.fossen.biz/wiley
     
 Author:     Thor I. Fossen
 """
+import argparse
 import os
-import sys 
+import sys
 import webbrowser
 import matplotlib.pyplot as plt
 from python_vehicle_simulator.vehicles import (
-    DSRV, frigate, otter, ROVzefakkel, semisub, shipClarke83, supply, tanker, 
+    DSRV, frigate, otter, ROVzefakkel, semisub, shipClarke83, supply, tanker,
     remus100, torpedo
 )
 from python_vehicle_simulator.lib import (
-    printSimInfo, printVehicleinfo, simulate, plotVehicleStates, plotControls, 
+    printSimInfo, printVehicleinfo, simulate, plotVehicleStates, plotControls,
     plot3D
 )
+from python_vehicle_simulator.gui.export_results import export_csv, export_json
 
 ### Simulation parameters ###
 sampleTime = 0.02                   # sample time [seconds]
@@ -50,11 +52,30 @@ Vehicle constructors:
 Call constructors without arguments to test step inputs, e.g. DSRV(), otter(), etc.
 """
 
+### CLI argument parsing ###
+def _parse_args():
+    parser = argparse.ArgumentParser(
+        description="Python Vehicle Simulator — GNC simulation tool",
+        add_help=True,
+    )
+    parser.add_argument(
+        '--csv', metavar='FILE', default=None,
+        help='Export simulation results to CSV file',
+    )
+    parser.add_argument(
+        '--json', metavar='FILE', default=None,
+        help='Export simulation results to JSON file',
+    )
+    # Use parse_known_args to avoid breaking if called without flags
+    args, _ = parser.parse_known_args()
+    return args
+
 ### Main program ###
 def main():
-    printSimInfo() 
+    args = _parse_args()
+    printSimInfo()
 
-    no = input("Please enter a vehicle no.: ")   
+    no = input("Please enter a vehicle no.: ")
 
     vehicleOptions = {
         '1': lambda: DSRV('depthAutopilot', 60.0),
@@ -76,18 +97,27 @@ def main():
         print('Error: Not a valid simulator option')
         sys.exit()
 
-    # Main simulation loop 
+    # Main simulation loop
     [simTime, simData] = simulate(N, sampleTime, vehicle)
-    
+
+    # Export results if requested via CLI flags
+    params = vehicle.get_all_params() if hasattr(vehicle, 'get_all_params') else None
+    if args.csv:
+        path = export_csv(args.csv, simTime, simData, params=params)
+        print(f"Results exported to CSV: {path}")
+    if args.json:
+        path = export_json(args.json, simTime, simData, params=params)
+        print(f"Results exported to JSON: {path}")
+
     # 3D plots and animation
-    plotVehicleStates(simTime, simData, 1)                    
+    plotVehicleStates(simTime, simData, 1)
     plotControls(simTime, simData, vehicle, 2)
-    plot3D(simData, numDataPoints, FPS, filename, 3)   
-    
-    """ Uncomment the line below for 3D animation in the web browswer. 
+    plot3D(simData, numDataPoints, FPS, filename, 3)
+
+    """ Uncomment the line below for 3D animation in the web browswer.
     Alternatively, open the animated GIF file manually in your preferred browser. """
     # webbrowser.get(browser).open_new_tab('file://' + os.path.abspath(filename))
-    
+
     plt.show()
     plt.close()
 
