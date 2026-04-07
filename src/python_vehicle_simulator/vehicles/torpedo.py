@@ -429,9 +429,9 @@ class torpedo:
 
     @beta_c.setter
     def beta_c(self, valor):
-        if not -180.0 <= valor <= 180.0:
+        if not -math.pi <= valor <= math.pi:
             raise ValueError(
-                "beta_c deve estar entre -180 e 180")
+                "beta_c deve estar entre -π e π radianos")
         self._beta_c = valor
 
     # -----------------------------------------------------------------------

@@ -138,10 +138,12 @@ def test_visualization_tabs_exist(mvc):
     right = gui._right_panel
     assert isinstance(right, QTabWidget), (
         f"Expected QTabWidget, got {type(right).__name__}")
-    assert right.count() == 3, f"Expected 3 tabs, got {right.count()}"
+    assert right.count() == 5, f"Expected 5 tabs, got {right.count()}"
     assert right.tabText(0) == "Controladores"
     assert right.tabText(1) == "Visualização 3D"
     assert right.tabText(2) == "Gráficos de Estado"
+    assert right.tabText(3) == "Sinais de Controlo"
+    assert right.tabText(4) == "Comparação"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

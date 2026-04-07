@@ -19,13 +19,13 @@ from PyQt6.QtWidgets import (
     QStatusBar, QMenuBar, QGroupBox,
     QFormLayout, QDoubleSpinBox, QScrollArea,
     QDialog, QComboBox, QLabel, QDialogButtonBox,
-    QMessageBox, QFileDialog, QListWidget,
+    QMessageBox, QFileDialog,
 )
 
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
                           TorpedoVizWidget, TorpedoControlsWidget,
                           ComparativeWidget)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
 
@@ -455,7 +455,6 @@ class TorpedoGUI(QMainWindow):
             self._controls_widget.plot_controls(simTime, simData, dimU=5)
 
             # Etapa 3 — store simulation for comparison / export
-            ctrl_mode = params.get('ref_z', '?')
             n_sim = len(self._controller.get_store()) + 1
             label = (f"Sim {n_sim} — "
                      f"z={params.get('ref_z', 0):.0f}m, "
@@ -499,6 +498,7 @@ class TorpedoGUI(QMainWindow):
             sb.setValue(float(valor))
             sb.blockSignals(False)
             sb.setStyleSheet("background-color: #d0e8ff;")
+            QTimer.singleShot(2000, lambda w=sb: w.setStyleSheet(""))
 
         self.statusBar().showMessage(
             f"{nome} actualizado automaticamente para {valor:.4g}")
