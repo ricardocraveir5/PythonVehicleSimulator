@@ -246,7 +246,7 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/ -v
 set QT_QPA_PLATFORM=offscreen && python -m pytest tests\ -v
 ```
 
-Resultado esperado: **39 passed**.
+Resultado esperado: **53 passed**.
 
 ---
 

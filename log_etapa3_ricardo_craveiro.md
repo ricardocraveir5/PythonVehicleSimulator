@@ -5,6 +5,7 @@
 - **Unidade:** DINAV — Dinâmica Avançada 2026
 - **Professor:** Pedro Barbosa Guedes
 - **Ferramenta de IA:** Claude Code (claude-opus-4-6)
+  - *Nota:* Modelo alterado de `claude-sonnet-4-6` (Etapa 2) para `claude-opus-4-6` devido à maior capacidade de raciocínio necessária para as funcionalidades avançadas da Etapa 3 (visualização 3D, análise comparativa, exportação de dados).
 - **Branch:** `claude/review-and-plan-stage-3-MV8Hz`
 - **Data:** 2026-04-03
 
@@ -210,8 +211,9 @@ de engenharia mas não para reprodução bit-a-bit. A tolerância de `1e-3`
 | fin_area na GUI | Corrigido (4 spinboxes) |
 | CLI `--csv`/`--json` | Funcional |
 | **Testes modelo/sim** | **29 passam** |
+| **Testes GUI** | **10 passam** |
 | **Testes Etapa 3** | **14 passam** |
-| **Total** | **43 testes passam** |
+| **Total** | **53 testes passam** |
 
 ---
 
