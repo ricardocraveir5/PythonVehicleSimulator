@@ -132,18 +132,19 @@ def test_prepare_simulation_emits_ready(mvc):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_visualization_tabs_exist(mvc):
-    """Painel direito deve ser um QTabWidget com 3 tabs de visualização."""
+    """Painel direito deve ser um QTabWidget com 6 tabs de visualização."""
     from PyQt6.QtWidgets import QTabWidget
     ctrl, gui, app = mvc
     right = gui._right_panel
     assert isinstance(right, QTabWidget), (
         f"Expected QTabWidget, got {type(right).__name__}")
-    assert right.count() == 5, f"Expected 5 tabs, got {right.count()}"
+    assert right.count() == 6, f"Expected 6 tabs, got {right.count()}"
     assert right.tabText(0) == "Controladores"
     assert right.tabText(1) == "Visualização 3D"
     assert right.tabText(2) == "Gráficos de Estado"
-    assert right.tabText(3) == "Sinais de Controlo"
-    assert right.tabText(4) == "Comparação"
+    assert right.tabText(3) == "Gráficos Etapa 3"
+    assert right.tabText(4) == "Sinais de Controlo"
+    assert right.tabText(5) == "Comparação"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
                           TorpedoVizWidget, TorpedoControlsWidget,
-                          ComparativeWidget)
+                          ComparativeWidget, Etapa3GraphsWidget)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
@@ -175,11 +175,16 @@ class TorpedoGUI(QMainWindow):
         self._states_widget = TorpedoStatesWidget()
         tabs.addTab(self._states_widget, "Gráficos de Estado")
 
-        # ── Tab 4: Sinais de Controlo (Etapa 3) ───────────────────────────
+        # ── Tab 4: Gráficos Etapa 3 (trajectória, profundidade,
+        #    velocidades, actuadores — mesmos do etapa3_graficos.py) ────────
+        self._etapa3_widget = Etapa3GraphsWidget()
+        tabs.addTab(self._etapa3_widget, "Gráficos Etapa 3")
+
+        # ── Tab 5: Sinais de Controlo (Etapa 3) ───────────────────────────
         self._controls_widget = TorpedoControlsWidget()
         tabs.addTab(self._controls_widget, "Sinais de Controlo")
 
-        # ── Tab 5: Análise Comparativa (Etapa 3) ──────────────────────────
+        # ── Tab 6: Análise Comparativa (Etapa 3) ──────────────────────────
         self._comparative_widget = ComparativeWidget()
         tabs.addTab(self._comparative_widget, "Comparação")
 
@@ -451,7 +456,9 @@ class TorpedoGUI(QMainWindow):
             self._viz_widget.run_animation(simTime, simData, L, diam)
             # Tab 3 — gráficos de estado
             self._states_widget.plot_states(simTime, simData)
-            # Tab 4 — sinais de controlo (Etapa 3)
+            # Tab 4 — gráficos Etapa 3 (trajectória, prof., velocidades, act.)
+            self._etapa3_widget.plot_etapa3(simTime, simData, dimU=5)
+            # Tab 5 — sinais de controlo (Etapa 3)
             self._controls_widget.plot_controls(simTime, simData, dimU=5)
 
             # Etapa 3 — store simulation for comparison / export
