@@ -220,3 +220,81 @@ def test_etapa3_widget_handles_short_simulation(widget):
     # Não deve lançar excepção
     widget.plot_etapa3(simTime, simData, dimU=5)
     assert len(widget._fig.axes) == 6
+
+
+# ---------------------------------------------------------------------------
+# TorpedoVizWidget — dual-3D animation (Etapa 3 A/B button)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def viz_widget(qt_app):
+    from python_vehicle_simulator.gui.torpedo_viz import TorpedoVizWidget
+    w = TorpedoVizWidget()
+    yield w
+    w.deleteLater()
+
+
+def _make_fake_sim(N: int, seed: float = 0.0):
+    simTime = np.linspace(0.0, N * 0.02, N).reshape(-1, 1)
+    simData = np.zeros((N, 22))
+    simData[:, 0] = np.linspace(0.0, 10.0 + seed, N)   # x
+    simData[:, 1] = np.linspace(0.0,  5.0 + seed, N)   # y
+    simData[:, 2] = np.linspace(0.0,  3.0 + seed, N)   # z
+    simData[:, 6] = 1.5                                # u
+    return simTime, simData
+
+
+def test_run_dual_animation_creates_two_3d_axes(viz_widget):
+    sT_A, sD_A = _make_fake_sim(200, 0.0)
+    sT_B, sD_B = _make_fake_sim(200, 5.0)
+    viz_widget.run_dual_animation(
+        sT_A, sD_A, sT_B, sD_B, 1.6, 0.19, "A", "B")
+    assert len(viz_widget._fig.axes) == 2
+    for ax in viz_widget._fig.axes:
+        assert ax.name == "3d"
+
+
+def test_run_dual_animation_sets_titles_from_labels(viz_widget):
+    sT_A, sD_A = _make_fake_sim(200, 0.0)
+    sT_B, sD_B = _make_fake_sim(200, 5.0)
+    viz_widget.run_dual_animation(
+        sT_A, sD_A, sT_B, sD_B, 1.6, 0.19,
+        "Sim A — Cd=0.42", "Sim B — Cd=0.25")
+    titles = [ax.get_title() for ax in viz_widget._fig.axes]
+    assert any("Sim A — Cd=0.42" in t for t in titles)
+    assert any("Sim B — Cd=0.25" in t for t in titles)
+
+
+def test_run_dual_animation_cancels_previous_animation(viz_widget):
+    sT_A, sD_A = _make_fake_sim(200, 0.0)
+    sT_B, sD_B = _make_fake_sim(200, 5.0)
+    viz_widget.run_animation(sT_A, sD_A, 1.6, 0.19)
+    prev = viz_widget._ani
+    assert prev is not None
+    viz_widget.run_dual_animation(
+        sT_A, sD_A, sT_B, sD_B, 1.6, 0.19, "A", "B")
+    assert viz_widget._ani is not None
+    assert viz_widget._ani is not prev
+
+
+def test_run_animation_single_still_works_after_dual(viz_widget):
+    sT_A, sD_A = _make_fake_sim(200, 0.0)
+    sT_B, sD_B = _make_fake_sim(200, 5.0)
+    viz_widget.run_dual_animation(
+        sT_A, sD_A, sT_B, sD_B, 1.6, 0.19, "A", "B")
+    assert len(viz_widget._fig.axes) == 2
+    viz_widget.run_animation(sT_A, sD_A, 1.6, 0.19)
+    assert len(viz_widget._fig.axes) == 1
+    assert viz_widget._fig.axes[0].name == "3d"
+
+
+def test_run_dual_animation_ignores_too_short_data(viz_widget):
+    sT_A, sD_A = _make_fake_sim(1, 0.0)   # N<2 → silent no-op
+    sT_B, sD_B = _make_fake_sim(1, 5.0)
+    # Pre-condition: placeholder figure with 1 axis
+    baseline_axes = len(viz_widget._fig.axes)
+    viz_widget.run_dual_animation(
+        sT_A, sD_A, sT_B, sD_B, 1.6, 0.19, "A", "B")
+    # Did not rebuild figure because N<2 → same axis count
+    assert len(viz_widget._fig.axes) == baseline_axes
+    assert viz_widget._ani is None

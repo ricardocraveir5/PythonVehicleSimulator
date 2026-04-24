@@ -167,6 +167,60 @@ class TorpedoController(QObject):
 
         self.simulation_ready.emit(new_instance)
 
+    def prepare_etapa3_simulation(self, cd_value: float):
+        """
+        Etapa 3 — Prepare a stepInput simulation with a Cd override applied
+        only to the NEW torpedo instance; the internal model is never mutated.
+
+        Used by the "Simular A e B (Etapa 3)" GUI button to run a pair of
+        simulations (Cd=0.42 then Cd=0.25) without clobbering the Cd value
+        currently shown in the Cd spin-box.
+
+        Emits simulation_ready(new_instance) on success, or
+        validation_error(message) if cd_value is out of range [0.1, 0.5].
+        """
+        if not (0.1 <= cd_value <= 0.5):
+            self.validation_error.emit(
+                f"[Cd] Cd deve estar entre 0.1 e 0.5 (recebido {cd_value}).")
+            return
+
+        try:
+            p = self._model.get_all_params()
+            ref_n = p['ref_n']
+            V_c   = p['V_c']
+            beta_c_deg = p['beta_c'] * (180.0 / 3.141592653589793)
+
+            new_instance = torpedo(
+                "stepInput", 0.0, 0.0, ref_n, V_c, beta_c_deg
+            )
+
+            constructor_keys = {
+                'ref_z', 'ref_psi', 'ref_n', 'V_c', 'beta_c',
+                'massa', 'T_heave', 'T_nomoto',
+                'fin_CL', 'fin_area', 'thruster_nMax',
+                'Cd',
+            }
+            overrides = {
+                k: v for k, v in p.items()
+                if k not in constructor_keys
+            }
+            new_instance.set_from_dict(overrides)
+
+            for i, cl in enumerate(p['fin_CL']):
+                new_instance.set_fin_CL(i, cl)
+            for i, area in enumerate(p['fin_area']):
+                new_instance.set_fin_area(i, area)
+            new_instance.set_thruster_nMax(p['thruster_nMax'])
+
+            new_instance.Cd = cd_value
+
+        except (ValueError, Exception) as e:
+            self.validation_error.emit(
+                f"Erro ao preparar simulação Etapa 3: {str(e)}")
+            return
+
+        self.simulation_ready.emit(new_instance)
+
     def reset_to_defaults(self):
         """
         Recreate the internal torpedo instance with factory defaults

@@ -280,3 +280,230 @@ def test_etapa3_widget_plotted_after_simulation(mvc):
     text = gui._etapa3_widget._info.text()
     assert str(N) in text, (
         f"Info-label não foi actualizado com N={N}: {text!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Etapa 3 A/B button — controller unit tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_prepare_etapa3_simulation_emits_ready_with_cd_override(qt_app):
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    ctrl = TorpedoController()
+    vehicles = []
+    ctrl.simulation_ready.connect(lambda v: vehicles.append(v))
+    ctrl.prepare_etapa3_simulation(0.25)
+    qt_app.processEvents()
+    assert len(vehicles) == 1, "simulation_ready not emitted exactly once"
+    v = vehicles[0]
+    assert abs(v.Cd - 0.25) < 1e-9
+    assert v.controlMode == "stepInput"
+
+
+def test_prepare_etapa3_simulation_does_not_mutate_model_cd(qt_app):
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    ctrl = TorpedoController()
+    ctrl.update_param("Cd", 0.42)
+    qt_app.processEvents()
+    updates = []
+    ctrl.params_updated.connect(lambda p: updates.append(p))
+    ctrl.prepare_etapa3_simulation(0.25)
+    qt_app.processEvents()
+    assert abs(ctrl.get_current_params()["Cd"] - 0.42) < 1e-9
+    assert not updates, "params_updated should NOT be emitted"
+
+
+def test_prepare_etapa3_simulation_rejects_out_of_range_cd(qt_app):
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    ctrl = TorpedoController()
+    errors = []
+    ready = []
+    ctrl.validation_error.connect(lambda m: errors.append(m))
+    ctrl.simulation_ready.connect(lambda v: ready.append(v))
+    ctrl.prepare_etapa3_simulation(0.05)
+    qt_app.processEvents()
+    assert errors, "validation_error not emitted for Cd=0.05"
+    assert not ready, "simulation_ready should not fire on validation error"
+
+
+def test_prepare_etapa3_simulation_preserves_user_edited_params(qt_app):
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    ctrl = TorpedoController()
+    ctrl.update_param("L", 2.0)
+    qt_app.processEvents()
+    vehicles = []
+    ctrl.simulation_ready.connect(lambda v: vehicles.append(v))
+    ctrl.prepare_etapa3_simulation(0.3)
+    qt_app.processEvents()
+    assert abs(vehicles[0].L - 2.0) < 1e-6
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Etapa 3 A/B button — GUI integration tests with a fake SimulationThread
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_fake_sim_thread_class():
+    """Create an isolated fake SimulationThread class per test fixture."""
+    import numpy as np
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class _FakeSimThread(QObject):
+        finished = pyqtSignal(object, object)
+        error    = pyqtSignal(str)
+
+        invocations = []
+        mode = "success"         # "success" | "error" | "noop"
+        error_msg = "boom"
+
+        def __init__(self, vehicle, N, sampleTime, parent=None):
+            super().__init__(parent)
+            self._vehicle = vehicle
+            self._N = N
+            self._sampleTime = sampleTime
+            _FakeSimThread.invocations.append(
+                {"vehicle": vehicle, "N": N, "sampleTime": sampleTime})
+
+        def start(self):
+            if _FakeSimThread.mode == "noop":
+                return
+            if _FakeSimThread.mode == "error":
+                self.error.emit(_FakeSimThread.error_msg)
+                return
+            N = max(2, self._N)
+            simTime = np.linspace(
+                0.0, N * self._sampleTime, N).reshape(-1, 1)
+            simData = np.zeros((N, 22))
+            simData[:, 0] = np.linspace(0.0, 10.0, N)   # x
+            simData[:, 6] = 1.5                          # u (surge)
+            simData[:, 16] = 1000.0                      # n_cmd (RPM)
+            self.finished.emit(simTime, simData)
+
+        def isRunning(self):
+            return False
+
+    return _FakeSimThread
+
+
+@pytest.fixture()
+def ab_mvc(qt_app):
+    from unittest.mock import patch
+    from PyQt6.QtWidgets import QMessageBox
+
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    from python_vehicle_simulator.gui import torpedo_gui as tg
+    from python_vehicle_simulator.gui.torpedo_gui import TorpedoGUI
+
+    fake_cls = _make_fake_sim_thread_class()
+
+    with patch.object(QMessageBox, "warning", staticmethod(lambda *a, **kw: None)), \
+         patch.object(QMessageBox, "information", staticmethod(lambda *a, **kw: None)), \
+         patch.object(tg, "SimulationThread", fake_cls):
+        ctrl = TorpedoController()
+        gui = TorpedoGUI(ctrl)
+        gui.show()
+        qt_app.processEvents()
+        try:
+            yield ctrl, gui, qt_app, fake_cls
+        finally:
+            gui.close()
+            gui.deleteLater()
+            qt_app.processEvents()
+
+
+def test_ab_button_exists_and_wired(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    assert hasattr(gui, "_btn_simulate_ab")
+    assert gui._btn_simulate_ab.text() == "Simular A e B (Etapa 3)"
+
+
+def test_ab_button_disables_all_sim_buttons_during_run(ab_mvc):
+    ctrl, gui, app, fake_cls = ab_mvc
+    fake_cls.mode = "noop"   # Sim A starts but never emits finished
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert gui._ab_mode == "A"
+    assert not gui._btn_simulate.isEnabled()
+    assert not gui._btn_simulate_ab.isEnabled()
+    assert not gui._btn_reset.isEnabled()
+
+
+def test_ab_button_runs_two_sims_with_etapa3_labels(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    store = ctrl.get_store()
+    assert len(store) == 2, f"expected 2 sims, got {len(store)}"
+    assert store[0]["label"] == "Sim A — Cd=0.42 (Etapa 3)"
+    assert store[1]["label"] == "Sim B — Cd=0.25 (Etapa 3)"
+
+
+def test_ab_button_switches_to_3d_tab_on_completion(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert gui._right_panel.currentIndex() == 1
+    assert gui._ab_mode is None
+    assert gui._btn_simulate.isEnabled()
+    assert gui._btn_simulate_ab.isEnabled()
+    assert gui._btn_reset.isEnabled()
+
+
+def test_ab_button_uses_200s_10000_steps(ab_mvc):
+    ctrl, gui, app, fake_cls = ab_mvc
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    calls = fake_cls.invocations
+    assert len(calls) == 2, f"expected 2 SimulationThread invocations, got {len(calls)}"
+    for c in calls:
+        assert c["N"] == 10000
+        assert abs(c["sampleTime"] - 0.02) < 1e-9
+
+
+def test_ab_button_error_in_sim_a_does_not_launch_sim_b(ab_mvc):
+    ctrl, gui, app, fake_cls = ab_mvc
+    fake_cls.mode = "error"
+    saved = gui._sim_duration
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert len(fake_cls.invocations) == 1, "Sim B should not have been launched"
+    assert gui._ab_mode is None
+    assert gui._btn_simulate.isEnabled()
+    assert gui._btn_simulate_ab.isEnabled()
+    assert gui._btn_reset.isEnabled()
+    assert gui._sim_duration == saved
+
+
+def test_ab_button_does_not_change_user_cd_widget_value(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    ctrl.update_param("Cd", 0.40)
+    app.processEvents()
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert abs(gui.param_widgets["Cd"].value() - 0.40) < 1e-9
+    assert abs(ctrl.get_current_params()["Cd"] - 0.40) < 1e-9
+
+
+def test_ab_button_restores_sim_duration_after_run(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    gui._sim_duration = 20.0
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert gui._sim_duration == 20.0
+    assert gui._ab_saved_duration is None
+
+
+def test_ab_button_triggers_dual_animation(ab_mvc):
+    ctrl, gui, app, _fake = ab_mvc
+    calls = []
+    original = gui._viz_widget.run_dual_animation
+
+    def _spy(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    gui._viz_widget.run_dual_animation = _spy
+    gui._launch_etapa3_ab_run()
+    app.processEvents()
+    assert len(calls) == 1
+    _args, kwargs = calls[0]
+    assert kwargs["label_A"] == "Sim A — Cd=0.42 (Etapa 3)"
+    assert kwargs["label_B"] == "Sim B — Cd=0.25 (Etapa 3)"
