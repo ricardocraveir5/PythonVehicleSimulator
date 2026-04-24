@@ -35,7 +35,7 @@ def qt_app():
 
 @pytest.fixture()
 def mvc(qt_app):
-    """Fresh controller + GUI for each test."""
+    """Fresh controller + GUI for each test, with teardown to free Qt resources."""
     from PyQt6.QtWidgets import QMessageBox
 
     from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
@@ -47,7 +47,12 @@ def mvc(qt_app):
         gui = TorpedoGUI(ctrl)
         gui.show()
         qt_app.processEvents()
-        yield ctrl, gui, qt_app
+        try:
+            yield ctrl, gui, qt_app
+        finally:
+            gui.close()
+            gui.deleteLater()
+            qt_app.processEvents()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -208,3 +213,70 @@ def test_geometry_dependency_mass(mvc):
     assert new_mass > original_mass, (
         f"Massa devia ter aumentado: {original_mass:.4f} → {new_mass:.4f}"
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 11 — Widget Etapa3GraphsWidget está registado na GUI
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_etapa3_widget_registered_in_gui(mvc):
+    """O widget Etapa3GraphsWidget deve existir como atributo da GUI."""
+    from python_vehicle_simulator.gui.torpedo_viz import Etapa3GraphsWidget
+    ctrl, gui, app = mvc
+    assert hasattr(gui, "_etapa3_widget"), (
+        "_etapa3_widget não existe como atributo da GUI")
+    assert isinstance(gui._etapa3_widget, Etapa3GraphsWidget), (
+        f"_etapa3_widget tem tipo errado: {type(gui._etapa3_widget).__name__}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 12 — Tab "Gráficos Etapa 3" está na posição correcta (índice 3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_etapa3_tab_position(mvc):
+    """A tab 'Gráficos Etapa 3' deve estar no índice 3, entre 'Gráficos de
+    Estado' (2) e 'Sinais de Controlo' (4)."""
+    ctrl, gui, app = mvc
+    right = gui._right_panel
+    assert right.tabText(3) == "Gráficos Etapa 3", (
+        f"Tab 3 tem texto errado: {right.tabText(3)!r}")
+    # Ordem relativa aos vizinhos
+    assert right.tabText(2) == "Gráficos de Estado"
+    assert right.tabText(4) == "Sinais de Controlo"
+    # O widget da tab 3 deve ser o mesmo que o atributo _etapa3_widget
+    assert right.widget(3) is gui._etapa3_widget
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cenário 13 — Widget é actualizado após _on_simulation_done
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_etapa3_widget_plotted_after_simulation(mvc):
+    """Após _on_simulation_done correr, o widget deve ter os 6 axes renderizados
+    (5 subplots + twin axis do RPM) e o info-label actualizado."""
+    import numpy as np
+
+    ctrl, gui, app = mvc
+    # simData sintético com as 22 colunas esperadas (eta, nu, cmd, actual)
+    N = 50
+    simTime = np.linspace(0, 2.5, N).reshape(-1, 1)
+    simData = np.zeros((N, 22))
+    simData[:, 0] = np.linspace(0, 10, N)     # x_north
+    simData[:, 1] = np.linspace(0, 5,  N)     # y_east
+    simData[:, 2] = np.linspace(0, 3,  N)     # z_depth
+    simData[:, 6] = 1.5                        # u (surge)
+    simData[:, 16] = 1000.0                    # n_cmd (RPM)
+
+    # Antes de chamar _on_simulation_done o widget tem o placeholder
+    assert "Aguarda" in gui._etapa3_widget._info.text()
+
+    gui._on_simulation_done(simTime, simData)
+    app.processEvents()
+
+    # Widget deve ter 6 axes após plot
+    assert len(gui._etapa3_widget._fig.axes) == 6, (
+        f"Widget não foi plotado: {len(gui._etapa3_widget._fig.axes)} axes")
+    # Info-label deve ter sido actualizado com nº de amostras
+    text = gui._etapa3_widget._info.text()
+    assert str(N) in text, (
+        f"Info-label não foi actualizado com N={N}: {text!r}")
