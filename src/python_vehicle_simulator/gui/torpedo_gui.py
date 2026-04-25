@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
                           TorpedoVizWidget, TorpedoControlsWidget,
-                          ComparativeWidget)
+                          ComparativeWidget, Etapa3GraphsWidget)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
@@ -96,19 +96,24 @@ class TorpedoGUI(QMainWindow):
         # Button row
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self._btn_reset      = QPushButton("Repor Defaults")
-        self._btn_validate   = QPushButton("Validar")
-        self._btn_simulate   = QPushButton("Simular")
-        self._btn_export_csv = QPushButton("Exportar CSV")
+        self._btn_reset       = QPushButton("Repor Defaults")
+        self._btn_validate    = QPushButton("Validar")
+        self._btn_simulate    = QPushButton("Simular")
+        self._btn_simulate_ab = QPushButton("Simular A e B (Etapa 3)")
+        self._btn_export_csv  = QPushButton("Exportar CSV")
         self._btn_export_csv.setEnabled(False)
         for btn in (self._btn_reset, self._btn_validate, self._btn_simulate,
-                    self._btn_export_csv):
+                    self._btn_simulate_ab, self._btn_export_csv):
             btn_layout.addWidget(btn)
         root_layout.addLayout(btn_layout)
 
         # Simulation state
         self._sim_duration: float = 20.0   # seconds (overridden by dialog)
         self._sim_thread = None             # SimulationThread instance
+
+        # Etapa 3 A/B run state machine
+        self._ab_mode: str | None = None       # None | "A" | "B"
+        self._ab_saved_duration: float | None = None
 
         # ------------------------------------------------------------------
         # Signal → slot connections
@@ -122,6 +127,7 @@ class TorpedoGUI(QMainWindow):
         self._btn_reset.clicked.connect(self._controller.reset_to_defaults)
         self._btn_validate.clicked.connect(self._load_params)
         self._btn_simulate.clicked.connect(self._launch_simulation_dialog)
+        self._btn_simulate_ab.clicked.connect(self._launch_etapa3_ab_run)
         self._btn_export_csv.clicked.connect(self._export_last_csv)
 
         # ------------------------------------------------------------------
@@ -175,11 +181,16 @@ class TorpedoGUI(QMainWindow):
         self._states_widget = TorpedoStatesWidget()
         tabs.addTab(self._states_widget, "Gráficos de Estado")
 
-        # ── Tab 4: Sinais de Controlo (Etapa 3) ───────────────────────────
+        # ── Tab 4: Gráficos Etapa 3 (trajectória, profundidade,
+        #    velocidades, actuadores — mesmos do etapa3_graficos.py) ────────
+        self._etapa3_widget = Etapa3GraphsWidget()
+        tabs.addTab(self._etapa3_widget, "Gráficos Etapa 3")
+
+        # ── Tab 5: Sinais de Controlo (Etapa 3) ───────────────────────────
         self._controls_widget = TorpedoControlsWidget()
         tabs.addTab(self._controls_widget, "Sinais de Controlo")
 
-        # ── Tab 5: Análise Comparativa (Etapa 3) ──────────────────────────
+        # ── Tab 6: Análise Comparativa (Etapa 3) ──────────────────────────
         self._comparative_widget = ComparativeWidget()
         tabs.addTab(self._comparative_widget, "Comparação")
 
@@ -430,7 +441,11 @@ class TorpedoGUI(QMainWindow):
             f"A simular… (modo '{ctrl_mode}', {int(self._sim_duration)} s)")
         self._btn_simulate.setEnabled(False)
 
-        sample_time = 0.05
+        # Etapa 3 A/B: passo mais fino replica fielmente o script (dt=0.02)
+        if self._ab_mode is not None:
+            sample_time = 0.02
+        else:
+            sample_time = 0.05
         N = max(1, int(self._sim_duration / sample_time))
 
         self._sim_thread = SimulationThread(vehicle, N, sample_time, parent=self)
@@ -441,7 +456,6 @@ class TorpedoGUI(QMainWindow):
     def _on_simulation_done(self, simTime, simData):
         """Recebe os dados da simulação e actualiza os widgets de visualização."""
         try:
-            self._btn_simulate.setEnabled(True)
             self._btn_export_csv.setEnabled(True)
             params = self._controller.get_current_params()
             L    = params.get('L',    1.6)
@@ -451,19 +465,26 @@ class TorpedoGUI(QMainWindow):
             self._viz_widget.run_animation(simTime, simData, L, diam)
             # Tab 3 — gráficos de estado
             self._states_widget.plot_states(simTime, simData)
-            # Tab 4 — sinais de controlo (Etapa 3)
+            # Tab 4 — gráficos Etapa 3 (trajectória, prof., velocidades, act.)
+            self._etapa3_widget.plot_etapa3(simTime, simData, dimU=5)
+            # Tab 5 — sinais de controlo (Etapa 3)
             self._controls_widget.plot_controls(simTime, simData, dimU=5)
 
             # Etapa 3 — store simulation for comparison / export
-            n_sim = len(self._controller.get_store()) + 1
-            label = (f"Sim {n_sim} — "
-                     f"z={params.get('ref_z', 0):.0f}m, "
-                     f"ψ={params.get('ref_psi', 0):.0f}°")
+            if self._ab_mode == "A":
+                label = "Sim A — Cd=0.42 (Etapa 3)"
+            elif self._ab_mode == "B":
+                label = "Sim B — Cd=0.25 (Etapa 3)"
+            else:
+                n_sim = len(self._controller.get_store()) + 1
+                label = (f"Sim {n_sim} — "
+                         f"z={params.get('ref_z', 0):.0f}m, "
+                         f"ψ={params.get('ref_psi', 0):.0f}°")
             self._controller.store_simulation(
                 simTime, simData, label=label,
                 metadata={'duration': self._sim_duration})
 
-            # Tab 5 — comparative overlay (if ≥ 2 simulations stored)
+            # Tab 6 — comparative overlay (if ≥ 2 simulations stored)
             store = self._controller.get_store()
             if len(store) >= 2:
                 a, b = store[-2], store[-1]
@@ -472,6 +493,36 @@ class TorpedoGUI(QMainWindow):
                     b['simTime'], b['simData'],
                     label_A=a['label'], label_B=b['label'])
 
+            # ── A/B state machine ──────────────────────────────────────────
+            if self._ab_mode == "A":
+                self._ab_mode = "B"
+                self.statusBar().showMessage(
+                    "Sim A concluída. A correr Sim B (Cd=0.25, stepInput, 200 s)…")
+                self._controller.prepare_etapa3_simulation(0.25)
+                return
+            if self._ab_mode == "B":
+                # Substitui a animação single de B pela dupla (A | B)
+                a, b = store[-2], store[-1]
+                self._viz_widget.run_dual_animation(
+                    a['simTime'], a['simData'],
+                    b['simTime'], b['simData'],
+                    L, diam,
+                    label_A=a['label'], label_B=b['label'])
+                self._right_panel.setCurrentIndex(1)   # "Visualização 3D"
+                if self._ab_saved_duration is not None:
+                    self._sim_duration = self._ab_saved_duration
+                    self._ab_saved_duration = None
+                self._ab_mode = None
+                self._btn_simulate.setEnabled(True)
+                self._btn_simulate_ab.setEnabled(True)
+                self._btn_reset.setEnabled(True)
+                self.statusBar().showMessage(
+                    "Etapa 3 concluída — A e B a correr lado a lado em 3D; "
+                    "tab Comparação também populada.")
+                return
+
+            # Modo normal (single-sim)
+            self._btn_simulate.setEnabled(True)
             n_steps = len(simData)
             x_f, y_f, z_f = simData[-1, 0], simData[-1, 1], simData[-1, 2]
             self.statusBar().showMessage(
@@ -485,6 +536,18 @@ class TorpedoGUI(QMainWindow):
         """Trata erros da thread de simulação."""
         try:
             self._btn_simulate.setEnabled(True)
+            if self._ab_mode is not None:
+                stage = self._ab_mode
+                if self._ab_saved_duration is not None:
+                    self._sim_duration = self._ab_saved_duration
+                    self._ab_saved_duration = None
+                self._ab_mode = None
+                self._btn_simulate_ab.setEnabled(True)
+                self._btn_reset.setEnabled(True)
+                self.statusBar().showMessage(
+                    f"Erro em Sim {stage}: {msg} — corrida A/B abortada.")
+                QMessageBox.warning(self, "Erro na Simulação A/B", msg)
+                return
             self.statusBar().showMessage(f"Erro na simulação: {msg}")
             QMessageBox.warning(self, "Erro na Simulação", msg)
         except RuntimeError:
@@ -591,6 +654,28 @@ class TorpedoGUI(QMainWindow):
                 sb_z.value(),
                 sb_psi.value(),
             )
+
+    def _launch_etapa3_ab_run(self):
+        """Etapa 3 — corre Sim A (Cd=0.42) e Sim B (Cd=0.25) em sequência."""
+        thread_busy = (self._sim_thread is not None
+                       and self._sim_thread.isRunning())
+        if self._ab_mode is not None or thread_busy:
+            QMessageBox.information(
+                self, "Simulação em curso",
+                "Já existe uma simulação a correr — aguarde pelo fim.")
+            return
+
+        self._btn_simulate.setEnabled(False)
+        self._btn_simulate_ab.setEnabled(False)
+        self._btn_reset.setEnabled(False)
+
+        self._ab_saved_duration = self._sim_duration
+        self._sim_duration = 200.0
+        self._ab_mode = "A"
+
+        self.statusBar().showMessage(
+            "A correr Sim A (Cd=0.42, stepInput, 200 s)…")
+        self._controller.prepare_etapa3_simulation(0.42)
 
     # ----------------------------------------------------------------------
     # Internal helpers
