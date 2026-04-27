@@ -10,6 +10,11 @@ Provides:
   TorpedoControlsWidget  — control command vs. actual time-series (Etapa 3)
   ComparativeWidget      — overlay two simulation runs for comparison (Etapa 3)
 
+Etapa 4 — As classes deste módulo refletem automaticamente o CurrentModel
+activo: a alteração à física em torpedo.dynamics() (ver torpedo.py) propaga-se
+para a animação 3D e os gráficos de estado sem qualquer alteração de código
+neste ficheiro.
+
 Dependências: PyQt6, matplotlib (já incluídos em requirements_gui.txt).
 Sem novas dependências externas.
 
