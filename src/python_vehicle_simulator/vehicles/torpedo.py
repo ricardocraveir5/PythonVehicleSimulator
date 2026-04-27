@@ -68,7 +68,7 @@ Author:     Braden Meyers
 #           (1201126@isep.ipp.pt)
 # Additions: integração CurrentModel,
 #            tempo interno de simulação,
-#            setter beta_c em graus
+#            property current_model
 
 import logging
 import numpy as np
@@ -448,12 +448,10 @@ class torpedo:
 
     @beta_c.setter
     def beta_c(self, valor):
-        # Etapa 4: aceita valor em graus, armazena em radianos
-        # (consistente com o construtor — beta_current * D2R).
-        if not -180.0 <= valor <= 180.0:
+        if not -math.pi <= valor <= math.pi:
             raise ValueError(
-                "beta_c deve estar entre -180 e 180 graus")
-        self._beta_c = valor * self.D2R
+                "beta_c deve estar entre -π e π radianos")
+        self._beta_c = valor
 
     @property
     def current_model(self): return self._current_model
