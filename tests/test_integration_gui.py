@@ -507,3 +507,63 @@ def test_ab_button_triggers_dual_animation(ab_mvc):
     _args, kwargs = calls[0]
     assert kwargs["label_A"] == "Sim A — Cd=0.42 (Etapa 3)"
     assert kwargs["label_B"] == "Sim B — Cd=0.25 (Etapa 3)"
+
+
+# ---------------------------------------------------------------------------
+# Etapa 4 — Selector de corrente oceânica + integração CurrentModel na GUI
+# ---------------------------------------------------------------------------
+
+def test_current_model_selector_has_five_options(mvc):
+    """Combo 'Corrente Oceânica' tem exactamente as 5 opções definidas na spec."""
+    _, gui, _ = mvc
+    items = [gui._current_model_combo.itemText(i)
+             for i in range(gui._current_model_combo.count())]
+    assert items == ['Constante', 'Linear', 'Lei 1/7',
+                     'Logarítmico', 'Gauss-Markov']
+
+
+def test_selector_linear_shows_linear_panel(mvc):
+    """Mudar selector para 'Linear' expõe widgets current_V_surface/z_ref."""
+    from PyQt6.QtWidgets import QDoubleSpinBox
+    _, gui, app = mvc
+    gui._current_model_combo.setCurrentText('Linear')
+    app.processEvents()
+    page = gui._current_model_stack.currentWidget()
+    spinboxes = page.findChildren(QDoubleSpinBox)
+    assert len(spinboxes) >= 2
+    assert 'current_V_surface' in gui.param_widgets
+    assert 'current_z_ref' in gui.param_widgets
+
+
+def test_selector_constante_shows_info_label(mvc):
+    """Mudar selector para 'Constante' mostra label informativo (sem spinboxes)."""
+    from PyQt6.QtWidgets import QDoubleSpinBox, QLabel
+    _, gui, app = mvc
+    gui._current_model_combo.setCurrentText('Constante')
+    app.processEvents()
+    page = gui._current_model_stack.currentWidget()
+    assert page.findChild(QLabel) is not None
+    assert page.findChild(QDoubleSpinBox) is None
+
+
+def test_prepare_simulation_linear_uses_linear_profile(mvc):
+    """prepare_simulation com modelo 'Linear' instancia torpedo com LinearProfile."""
+    from python_vehicle_simulator.lib.environment import LinearProfile
+    ctrl, gui, app = mvc
+    gui._current_model_combo.setCurrentText('Linear')
+    app.processEvents()
+    vehicles = []
+    ctrl.simulation_ready.connect(lambda v: vehicles.append(v))
+    ctrl.prepare_simulation('depthHeadingAutopilot', 30.0, 50.0)
+    app.processEvents()
+    assert vehicles, "simulation_ready não foi emitido"
+    assert isinstance(vehicles[-1].current_model, LinearProfile)
+
+
+def test_v_c_and_beta_c_deg_widgets_exist(mvc):
+    """Widgets V_c e beta_c_deg estão em param_widgets com valores válidos."""
+    _, gui, _ = mvc
+    assert 'V_c' in gui.param_widgets
+    assert 'beta_c_deg' in gui.param_widgets
+    assert gui.param_widgets['V_c'].value() >= 0.0
+    assert -180.0 <= gui.param_widgets['beta_c_deg'].value() <= 180.0

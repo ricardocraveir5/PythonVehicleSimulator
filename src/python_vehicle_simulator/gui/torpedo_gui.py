@@ -13,13 +13,24 @@ Additions:       Ricardo Craveiro (1191000@isep.ipp.pt)
 DINAV 2026 — Etapa 2/3
 """
 
+import math
+
+import numpy as np
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QTabWidget,
     QHBoxLayout, QVBoxLayout, QPushButton,
     QStatusBar, QMenuBar, QGroupBox,
     QFormLayout, QDoubleSpinBox, QScrollArea,
     QDialog, QComboBox, QLabel, QDialogButtonBox,
-    QMessageBox, QFileDialog,
+    QMessageBox, QFileDialog, QStackedWidget,
+)
+
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
+from python_vehicle_simulator.lib.environment import (
+    LinearProfile, PowerLawProfile, LogarithmicProfile,
 )
 
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
@@ -33,6 +44,78 @@ from PyQt6.QtGui import QPalette, QColor
 # Helper: read-only spin-box style
 # ---------------------------------------------------------------------------
 _READONLY_STYLE = "background-color: #d0d0d0;"
+
+
+class CurrentProfileWidget(QWidget):
+    """
+    Etapa 4 — Gráfico estático do perfil V_c(z) para o CurrentModel
+    actualmente seleccionado na GUI.
+
+    Convenção NED: z=0 no topo (superfície), z cresce para baixo.
+    Altura fixa de 150 px. O método update_plot é ligado ao sinal
+    params_updated do controller para refrescar automaticamente.
+    """
+
+    _Z_MAX = 100.0  # base do gráfico em metros (NED)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fig = Figure(figsize=(4, 1.5), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._canvas)
+        self.setFixedHeight(150)
+
+    def update_plot(self, params: dict):
+        """Redesenha o perfil V_c(z) consoante params['current_model_selected']."""
+        tipo = params.get('current_model_selected', 'Constante')
+        beta_c_rad = params.get('beta_c', 0.0)
+
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+        ax.set_xlabel('V_c (m/s)')
+        ax.set_ylabel('z (m)')
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+        z = np.linspace(0.01, self._Z_MAX, 200)
+
+        if tipo == 'Constante':
+            V_c = float(params.get('V_c', 0.0))
+            ax.axvline(V_c, color='C0', linewidth=1.5)
+            ax.set_xlim(left=-0.05, right=max(0.5, V_c * 1.2 + 0.1))
+        elif tipo == 'Linear':
+            modelo = LinearProfile(
+                params['current_V_surface'], params['current_z_ref'],
+                beta_c_rad)
+            vs = np.array([modelo.get_current(zi, 0.0)[0] for zi in z])
+            ax.plot(vs, z, color='C0', linewidth=1.5)
+        elif tipo == 'Lei 1/7':
+            modelo = PowerLawProfile(
+                params['current_V_surface'], params['current_z_ref'],
+                beta_c_rad)
+            vs = np.array([modelo.get_current(zi, 0.0)[0] for zi in z])
+            ax.plot(vs, z, color='C0', linewidth=1.5)
+        elif tipo == 'Logarítmico':
+            modelo = LogarithmicProfile(
+                V_star=params['current_V_star'], z_0=params['current_z_0'],
+                beta_c=beta_c_rad, kappa=params['current_kappa'])
+            vs = np.array([modelo.get_current(zi, 0.0)[0] for zi in z])
+            ax.plot(vs, z, color='C0', linewidth=1.5)
+        elif tipo == 'Gauss-Markov':
+            Vc0 = float(params.get('current_Vc0', 0.0))
+            sigma = float(params.get('current_sigma', 0.0))
+            ax.axvline(Vc0, color='C0', linewidth=1.5,
+                       label=f'V_c0 = {Vc0:.2f}')
+            if sigma > 0:
+                ax.axvspan(Vc0 - sigma, Vc0 + sigma, alpha=0.2, color='C0',
+                           label=f'±σ = ±{sigma:.2f}')
+            ax.legend(loc='upper right', fontsize='x-small')
+            ax.set_xlim(left=Vc0 - max(sigma, 0.1) - 0.05,
+                        right=Vc0 + max(sigma, 0.1) + 0.05)
+
+        ax.set_ylim(self._Z_MAX, 0.0)  # z=0 no topo (NED)
+        self._canvas.draw_idle()
 
 
 class TorpedoGUI(QMainWindow):
@@ -123,6 +206,9 @@ class TorpedoGUI(QMainWindow):
         self._controller.simulation_ready.connect(self._on_simulation_ready)
         self._controller.param_dependency_updated.connect(
             self._on_dependency_updated)
+        # Etapa 4 — gráfico V_c(z) actualiza-se a cada params_updated
+        self._controller.params_updated.connect(
+            self._current_profile_widget.update_plot)
 
         self._btn_reset.clicked.connect(self._controller.reset_to_defaults)
         self._btn_validate.clicked.connect(self._load_params)
@@ -169,6 +255,7 @@ class TorpedoGUI(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self._build_group_depth_ctrl())
         layout.addWidget(self._build_group_heading_ctrl())
+        layout.addWidget(self._build_group_current_model())
         layout.addStretch()
         scroll.setWidget(container)
         tabs.addTab(scroll, "Controladores")
@@ -220,6 +307,13 @@ class TorpedoGUI(QMainWindow):
              'Amortecimento relativo em rolamento (—)\nLimites: 0.0 – 1.0'),
             ('zeta_pitch', 'ζ_pitch', '—', 0.0, 1.0, 0.01, 3, False,
              'Amortecimento relativo em arfagem (—)\nLimites: 0.0 – 1.0'),
+            # Etapa 4 — corrente oceânica (V_c, β_c). β_c convertido em
+            # graus pelo controller para coerência com o construtor torpedo().
+            ('V_c',         'V_c',  'm/s',     0.0,   5.0, 0.01, 3, False,
+             'Velocidade da corrente oceânica (m/s)\nLimites: 0.0 – 5.0 m/s'),
+            ('beta_c_deg',  'β_c',  '°',    -180.0, 180.0, 1.0,  1, False,
+             'Direcção da corrente (°) — convertida para radianos no controller\n'
+             'Limites: -180 – 180°'),
         ]
         self._add_spinboxes(form, specs)
         return box
@@ -328,6 +422,124 @@ class TorpedoGUI(QMainWindow):
         ]
         self._add_spinboxes(form, specs)
         return box
+
+    # -- GroupBox 6: Corrente Oceânica (Etapa 4) ----------------------------
+
+    def _build_group_current_model(self) -> QGroupBox:
+        """
+        Etapa 4 — Selector do modelo de corrente + parâmetros específicos
+        em QStackedWidget + gráfico estático V_c(z).
+        """
+        box = QGroupBox("Corrente Oceânica")
+        outer = QVBoxLayout(box)
+        outer.setSpacing(6)
+
+        # Combo + label no topo
+        top_form = QFormLayout()
+        top_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._current_model_combo = QComboBox()
+        self._current_model_combo.addItems([
+            'Constante', 'Linear', 'Lei 1/7', 'Logarítmico', 'Gauss-Markov',
+        ])
+        self._current_model_combo.setToolTip(
+            'Tipo de modelo de corrente oceânica aplicado em torpedo.dynamics()')
+        top_form.addRow("Tipo de modelo:", self._current_model_combo)
+        outer.addLayout(top_form)
+
+        # Stack com 5 páginas (uma por modelo)
+        self._current_model_stack = QStackedWidget()
+
+        # Página 0 — Constante (apenas label informativo)
+        page_const = QWidget()
+        const_layout = QVBoxLayout(page_const)
+        const_layout.setContentsMargins(8, 4, 8, 4)
+        const_layout.addWidget(QLabel(
+            "Usar V_c e β_c dos Parâmetros Físicos."))
+        self._current_model_stack.addWidget(page_const)
+
+        # Página 1 — Linear
+        page_lin = QWidget()
+        form_lin = QFormLayout(page_lin)
+        self._add_spinboxes(form_lin, [
+            ('current_V_surface', 'V_surface', 'm/s', 0.0, 5.0, 0.01, 3, False,
+             'Velocidade na superfície (m/s)\nLimites: 0.0 – 5.0'),
+            ('current_z_ref',    'z_ref',     'm',   0.1, 500.0, 1.0, 2, False,
+             'Profundidade de referência (m)\nLimites: 0.1 – 500.0'),
+        ])
+        self._current_model_stack.addWidget(page_lin)
+
+        # Página 2 — Lei 1/7: partilha os parâmetros (V_surface, z_ref) com
+        # a página Linear (mesmas keys no controller). A UI evita duplicar
+        # widgets — só mostra um label informativo.
+        page_pow = QWidget()
+        pow_layout = QVBoxLayout(page_pow)
+        pow_layout.setContentsMargins(8, 4, 8, 4)
+        pow_layout.addWidget(QLabel(
+            "Usa os mesmos parâmetros (V_surface, z_ref) da página 'Linear'.\n"
+            "A diferença é apenas a função de cálculo:\n"
+            "  Linear: V_c = V_surface · (z / z_ref)\n"
+            "  Lei 1/7: V_c = V_surface · (z / z_ref)^(1/7)"))
+        self._current_model_stack.addWidget(page_pow)
+
+        # Página 3 — Logarítmico
+        page_log = QWidget()
+        form_log = QFormLayout(page_log)
+        self._add_spinboxes(form_log, [
+            ('current_V_star', 'V_star', 'm/s',   0.0,  1.0, 0.001, 4, False,
+             'Velocidade de fricção V* (m/s)\nLimites: 0.0 – 1.0'),
+            ('current_z_0',    'z_0',    'm',     0.001, 10.0, 0.001, 4, False,
+             'Rugosidade aerodinâmica do fundo z_0 (m)\nLimites: 0.001 – 10.0'),
+            ('current_kappa',  'κ',      '—',     0.0,  1.0,  0.01,  2, True,
+             'Constante de von Kármán (—) — só de leitura, fixo em 0.41'),
+        ])
+        self._current_model_stack.addWidget(page_log)
+
+        # Página 4 — Gauss-Markov
+        page_gm = QWidget()
+        form_gm = QFormLayout(page_gm)
+        self._add_spinboxes(form_gm, [
+            ('current_mu',    'μ',     '1/s',   0.0,    1.0,    0.01,  3, False,
+             'Inverso do tempo de correlação μ (1/s)\nLimites: 0.0 – 1.0'),
+            ('current_sigma', 'σ',     'm/s',   0.0,    1.0,    0.001, 4, False,
+             'Desvio padrão do ruído σ (m/s)\nLimites: 0.0 – 1.0'),
+            ('current_Vc0',   'V_c0',  'm/s',   0.0,    5.0,    0.01,  3, False,
+             'Velocidade inicial V_c0 (m/s)\nLimites: 0.0 – 5.0'),
+            ('current_seed',  'seed',  '—',     0.0,  9999.0,   1.0,   0, False,
+             'Semente do gerador aleatório (int 0–9999)'),
+        ])
+        self._current_model_stack.addWidget(page_gm)
+
+        outer.addWidget(self._current_model_stack)
+
+        # Gráfico estático V_c(z)
+        self._current_profile_widget = CurrentProfileWidget()
+        outer.addWidget(self._current_profile_widget)
+
+        # Inicializar valores nos spinboxes a partir do estado actual do
+        # controller (defaults da Etapa 4) — é seguro porque param_widgets
+        # já está preenchido pelo _add_spinboxes acima.
+        defaults = self._controller.get_view_state()
+        for key in ('current_V_surface', 'current_z_ref',
+                    'current_V_star', 'current_z_0', 'current_kappa',
+                    'current_mu', 'current_sigma', 'current_Vc0',
+                    'current_seed'):
+            if key in self.param_widgets and key in defaults:
+                self.param_widgets[key].blockSignals(True)
+                self.param_widgets[key].setValue(float(defaults[key]))
+                self.param_widgets[key].blockSignals(False)
+
+        # Ligações: combo → stack + controller
+        self._current_model_combo.currentIndexChanged.connect(
+            self._on_current_model_changed)
+
+        return box
+
+    def _on_current_model_changed(self, idx: int):
+        """Etapa 4 — handler do combo: muda página e propaga ao controller."""
+        self._current_model_stack.setCurrentIndex(idx)
+        self._controller.update_param(
+            'current_model_selected',
+            self._current_model_combo.itemText(idx))
 
     # ----------------------------------------------------------------------
     # Shared spin-box factory
@@ -683,8 +895,10 @@ class TorpedoGUI(QMainWindow):
 
     def _load_params(self):
         """Populate all spin-boxes with current model values."""
-        params = self._controller.get_current_params()
+        # Etapa 4 — usa get_view_state() para incluir beta_c_deg + current_*
+        params = self._controller.get_view_state()
         self._on_params_updated(params)
+        self._current_profile_widget.update_plot(params)
         self.statusBar().showMessage(
             f"Pronto. ({len(params)} parâmetros carregados)")
 
