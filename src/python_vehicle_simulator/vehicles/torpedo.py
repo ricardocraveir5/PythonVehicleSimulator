@@ -62,6 +62,13 @@ Author:     Braden Meyers
 # Note: Original anomalias A1, A5, A6
 #       documentadas mas preservadas para
 #       manter interface base com mainLoop.py
+#
+# DINAV 2026 — Etapa 4
+# Co-autor: Afonso Barreiro
+#           (1201126@isep.ipp.pt)
+# Additions: integração CurrentModel,
+#            tempo interno de simulação,
+#            property current_model
 
 import logging
 import numpy as np
@@ -69,6 +76,7 @@ import math
 from python_vehicle_simulator.lib.control import integralSMC
 from python_vehicle_simulator.lib.gnc import crossFlowDrag,forceLiftDrag,Hmtrx,m2c,gvect,ssa
 from python_vehicle_simulator.lib.actuator import fin, thruster
+from python_vehicle_simulator.lib.environment import CurrentModel
 
 # Class Vehicle
 class torpedo:
@@ -95,6 +103,8 @@ class torpedo:
         r_rpm = 0,
         V_current = 0,
         beta_current = 0,
+        *,
+        current_model = None,
     ):
 
         # Constants
@@ -122,6 +132,15 @@ class torpedo:
         self._ref_n   = r_rpm
         self._V_c     = V_current
         self._beta_c  = beta_current * self.D2R
+        # Etapa 4 — modelo de corrente opcional (None = legado: V_c/beta_c constantes).
+        self._current_model = None
+        if current_model is not None:
+            if not isinstance(current_model, CurrentModel):
+                raise ValueError(
+                    "current_model deve ser instância de CurrentModel ou None")
+            self._current_model = current_model
+        # Tempo interno de simulação, incrementado em dynamics() em cada passo.
+        self._t_sim = 0.0
         self.controlMode = controlSystem
 
         # Initialize the AUV model
@@ -433,6 +452,16 @@ class torpedo:
             raise ValueError(
                 "beta_c deve estar entre -π e π radianos")
         self._beta_c = valor
+
+    @property
+    def current_model(self): return self._current_model
+
+    @current_model.setter
+    def current_model(self, valor):
+        if valor is not None and not isinstance(valor, CurrentModel):
+            raise ValueError(
+                "current_model deve ser instância de CurrentModel ou None")
+        self._current_model = valor
 
     # -----------------------------------------------------------------------
     # BLOCO 3 — Métodos de acesso às barbatanas e propulsor
@@ -761,7 +790,12 @@ class torpedo:
                        for i in range(4)],
             'fin_area': [self.get_fin_area(i)
                          for i in range(4)],
-            'thruster_nMax': self.get_thruster_nMax()
+            'thruster_nMax': self.get_thruster_nMax(),
+            # Etapa 4: tipo de modelo de corrente activo (None ⇒ legado constante).
+            'current_model_type': (
+                type(self._current_model).__name__
+                if self._current_model is not None
+                else 'ConstantCurrent'),
         }
 
     def set_from_dict(self, params_dict):
@@ -799,11 +833,24 @@ class torpedo:
         the AUV equations of motion using Euler's method.
         """
 
-        # Current velocities
-        u_c = self._V_c * math.cos(self._beta_c - eta[5])  # current surge velocity
-        v_c = self._V_c * math.sin(self._beta_c - eta[5])  # current sway velocity
+        # Etapa 4 — actualiza tempo interno de simulação antes de qualquer
+        # consulta a modelos dependentes do tempo (e.g., GaussMarkovCurrent).
+        self._t_sim += sampleTime
+
+        # Velocidade da corrente: usa CurrentModel se fornecido (perfis em z, t),
+        # caso contrário recorre aos atributos legados V_c/beta_c (constantes).
+        if self._current_model is None:
+            V_c, beta_c = self._V_c, self._beta_c
+        else:
+            V_c, beta_c = self._current_model.get_current(eta[2], self._t_sim)
+
+        u_c = V_c * math.cos(beta_c - eta[5])  # current surge velocity
+        v_c = V_c * math.sin(beta_c - eta[5])  # current sway velocity
 
         nu_c = np.array([u_c, v_c, 0, 0, 0, 0], float) # current velocity
+        # Nota Etapa 4: Dnu_c assume corrente localmente constante (Fossen 2021,
+        # Cap. 8). Quando self._current_model varia em z ou t, esta expressão
+        # passa a ser uma aproximação — termos ∂V_c/∂z e ∂V_c/∂t são desprezados.
         Dnu_c = np.array([nu[5]*v_c, -nu[5]*u_c, 0, 0, 0, 0],float) # derivative
         nu_r = nu - nu_c                               # relative velocity
         alpha = math.atan2( nu_r[2], nu_r[0] )         # angle of attack

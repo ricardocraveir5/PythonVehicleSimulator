@@ -1,0 +1,40 @@
+DINAV 2026 — Etapa 4 — Métricas (vs S0; S5 também vs S1)
+================================================================
+
+S0 — Baseline V_c = 0 m/s
+  Desvio máximo horizontal vs S0 (m): 0.0000
+  Erro RMS de profundidade vs setpoint (m): 11.1828
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.7971
+
+S1 — ConstantCurrent V_c = 0.5 m/s
+  Desvio máximo horizontal vs S0 (m): 74.3281
+  Erro RMS de profundidade vs setpoint (m): 11.1390
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.9063
+
+S2 — LinearProfile (V_surface=1.0, z_ref=50)
+  Desvio máximo horizontal vs S0 (m): 67.4657
+  Erro RMS de profundidade vs setpoint (m): 11.1695
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.8257
+
+S3 — PowerLawProfile 1/7 (V_surface=1.0, z_ref=50)
+  Desvio máximo horizontal vs S0 (m): 129.1374
+  Erro RMS de profundidade vs setpoint (m): 11.1263
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.9604
+
+S4 — LogarithmicProfile (V*=0.05, z_0=0.01, κ=0.41)
+  Desvio máximo horizontal vs S0 (m): 135.5492
+  Erro RMS de profundidade vs setpoint (m): 11.1250
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.9673
+
+S5 — GaussMarkovCurrent (μ=0.1, σ=0.1, V_c0=0.5, seed=42)
+  Desvio máximo horizontal vs S0 (m): 8.1730
+  Erro RMS de profundidade vs setpoint (m): 11.1839
+  RMS deflexão média das 4 barbatanas (°): 0.000000
+  Média dos RMS individuais das 4 barbatanas (°): 0.8107
+  Desvio padrão horizontal vs S1 (m): 23.4934
+

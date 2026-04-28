@@ -56,10 +56,16 @@ def printVehicleinfo(vehicle, sampleTime, N):
     
 
 ###############################################################################
-# Function simulate(N, sampleTime, vehicle)
+# Function simulate(N, sampleTime, vehicle, is_cancelled=None)
 ###############################################################################
-def simulate(N, sampleTime, vehicle):
-    
+def simulate(N, sampleTime, vehicle, is_cancelled=None):
+    """
+    Etapa 4+ — parâmetro opcional ``is_cancelled``: callable() -> bool.
+    Quando devolve True, o loop interrompe-se e devolve os dados parciais
+    acumulados até esse passo. Default ``None`` mantém comportamento legado
+    (loop completo até N+1 amostras).
+    """
+
     DOF = 6                     # degrees of freedom
     t = 0                       # initial simulation time
 
@@ -67,36 +73,43 @@ def simulate(N, sampleTime, vehicle):
     eta = np.array([0, 0, 0, 0, 0, 0], float)    # position/attitude, user editable
     nu = vehicle.nu                              # velocity, defined by vehicle class
     u_actual = vehicle.u_actual                  # actual inputs, defined by vehicle class
-    
+
     # Initialization of table used to store the simulation data
     simData = np.empty( [0, 2*DOF + 2 * vehicle.dimU], float)
 
     # Simulator for-loop
     for i in range(0,N+1):
-        
+
+        # Cancelamento cooperativo (Etapa 4+) — verificado no início de cada
+        # iteração para que a UI possa abortar uma simulação longa.
+        if is_cancelled is not None and is_cancelled():
+            break
+
         t = i * sampleTime      # simulation time
-        
+
         # Vehicle specific control systems
         if (vehicle.controlMode == 'depthAutopilot'):
             u_control = vehicle.depthAutopilot(eta,nu,sampleTime)
         elif (vehicle.controlMode == 'headingAutopilot'):
-            u_control = vehicle.headingAutopilot(eta,nu,sampleTime)   
+            u_control = vehicle.headingAutopilot(eta,nu,sampleTime)
         elif (vehicle.controlMode == 'depthHeadingAutopilot'):
-            u_control = vehicle.depthHeadingAutopilot(eta,nu,sampleTime)             
+            u_control = vehicle.depthHeadingAutopilot(eta,nu,sampleTime)
         elif (vehicle.controlMode == 'DPcontrol'):
-            u_control = vehicle.DPcontrol(eta,nu,sampleTime)                   
+            u_control = vehicle.DPcontrol(eta,nu,sampleTime)
         elif (vehicle.controlMode == 'stepInput'):
-            u_control = vehicle.stepInput(t)          
-        
+            u_control = vehicle.stepInput(t)
+
         # Store simulation data in simData
         signals = np.append( np.append( np.append(eta,nu),u_control), u_actual )
-        simData = np.vstack( [simData, signals] ) 
+        simData = np.vstack( [simData, signals] )
 
         # Propagate vehicle and attitude dynamics
         [nu, u_actual]  = vehicle.dynamics(eta,nu,u_actual,u_control,sampleTime)
         eta = attitudeEuler(eta,nu,sampleTime)
 
-    # Store simulation time vector
-    simTime = np.arange(start=0, stop=t+sampleTime, step=sampleTime)[:, None]
+    # Store simulation time vector — alinhado ao número de linhas de simData
+    # (importante para o caso cancelado, em que simData tem N_partial linhas).
+    n_rows = simData.shape[0]
+    simTime = (np.arange(n_rows, dtype=float) * sampleTime)[:, None]
 
     return(simTime,simData)
