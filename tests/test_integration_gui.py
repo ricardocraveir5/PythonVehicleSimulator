@@ -137,19 +137,20 @@ def test_prepare_simulation_emits_ready(mvc):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_visualization_tabs_exist(mvc):
-    """Painel direito deve ser um QTabWidget com 6 tabs de visualização."""
+    """Painel direito deve ser um QTabWidget com 7 tabs (Etapa 4+ adicionou Análise)."""
     from PyQt6.QtWidgets import QTabWidget
     ctrl, gui, app = mvc
     right = gui._right_panel
     assert isinstance(right, QTabWidget), (
         f"Expected QTabWidget, got {type(right).__name__}")
-    assert right.count() == 6, f"Expected 6 tabs, got {right.count()}"
+    assert right.count() == 7, f"Expected 7 tabs, got {right.count()}"
     assert right.tabText(0) == "Controladores"
     assert right.tabText(1) == "Visualização 3D"
     assert right.tabText(2) == "Gráficos de Estado"
     assert right.tabText(3) == "Gráficos Etapa 3"
     assert right.tabText(4) == "Sinais de Controlo"
     assert right.tabText(5) == "Comparação"
+    assert right.tabText(6) == "Análise"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -347,8 +348,9 @@ def _make_fake_sim_thread_class():
     from PyQt6.QtCore import QObject, pyqtSignal
 
     class _FakeSimThread(QObject):
-        finished = pyqtSignal(object, object)
-        error    = pyqtSignal(str)
+        finished  = pyqtSignal(object, object)
+        error     = pyqtSignal(str)
+        cancelled = pyqtSignal()  # Etapa 4+ — paridade com o SimulationThread real
 
         invocations = []
         mode = "success"         # "success" | "error" | "noop"
@@ -359,6 +361,7 @@ def _make_fake_sim_thread_class():
             self._vehicle = vehicle
             self._N = N
             self._sampleTime = sampleTime
+            self._cancel_flag = False
             _FakeSimThread.invocations.append(
                 {"vehicle": vehicle, "N": N, "sampleTime": sampleTime})
 
@@ -376,6 +379,15 @@ def _make_fake_sim_thread_class():
             simData[:, 6] = 1.5                          # u (surge)
             simData[:, 16] = 1000.0                      # n_cmd (RPM)
             self.finished.emit(simTime, simData)
+
+        def cancel(self):
+            self._cancel_flag = True
+
+        def is_cancelled(self) -> bool:
+            return self._cancel_flag
+
+        def wait(self, timeout_ms: int = 0) -> bool:
+            return True
 
         def isRunning(self):
             return False
@@ -567,3 +579,167 @@ def test_v_c_and_beta_c_deg_widgets_exist(mvc):
     assert 'beta_c_deg' in gui.param_widgets
     assert gui.param_widgets['V_c'].value() >= 0.0
     assert -180.0 <= gui.param_widgets['beta_c_deg'].value() <= 180.0
+
+
+# ---------------------------------------------------------------------------
+# Etapa 4+ — Start/Stop, comparações personalizáveis, gráficos analíticos
+# ---------------------------------------------------------------------------
+
+def test_simulate_supports_cancellation():
+    """mainLoop.simulate() respeita is_cancelled e devolve dados parciais."""
+    from python_vehicle_simulator.lib.mainLoop import simulate
+    from python_vehicle_simulator.vehicles.torpedo import torpedo as torp
+
+    veh = torp("stepInput")
+    counter = {'n': 0}
+    def cancel_after_5():
+        counter['n'] += 1
+        return counter['n'] > 5
+    simTime, simData = simulate(N=1000, sampleTime=0.05, vehicle=veh,
+                                is_cancelled=cancel_after_5)
+    # 5 iterações antes de o flag ser True ⇒ 5 linhas de simData
+    assert simData.shape[0] == 5
+    assert simTime.shape == (5, 1)
+
+
+def test_stop_button_enabled_only_during_simulation(mvc):
+    """Antes de qualquer sim, _btn_stop está desactivado."""
+    _, gui, _ = mvc
+    assert hasattr(gui, '_btn_stop')
+    assert gui._btn_stop.text() == 'Parar'
+    assert not gui._btn_stop.isEnabled()
+
+
+def test_stop_button_resets_buttons_when_clicked(mvc):
+    """Clicar Parar repõe estado dos botões e limpa flags A/B e compare."""
+    ctrl, gui, app = mvc
+    # Simular estado de A/B em curso
+    gui._ab_mode = "A"
+    gui._btn_simulate.setEnabled(False)
+    gui._btn_stop.setEnabled(True)
+    gui._btn_simulate_ab.setEnabled(False)
+    gui._on_stop_clicked()
+    app.processEvents()
+    assert gui._ab_mode is None
+    assert gui._btn_simulate.isEnabled()
+    assert not gui._btn_stop.isEnabled()
+    assert gui._btn_simulate_ab.isEnabled()
+
+
+def test_compare_buttons_exist_and_wired(mvc):
+    """Etapa 4+ — botões 'Comparar Sem/Com Corrente' e 'Comparar 2 Cenários' existem."""
+    _, gui, _ = mvc
+    assert hasattr(gui, '_btn_compare_currents')
+    assert hasattr(gui, '_btn_compare_custom')
+    assert gui._btn_compare_currents.text() == 'Comparar Sem/Com Corrente'
+    assert 'Comparar' in gui._btn_compare_custom.text()
+
+
+def test_make_no_vs_with_current_cfgs_shape():
+    """Controller devolve 2 cfgs distintas: sem e com corrente."""
+    from python_vehicle_simulator.gui.torpedo_controller import TorpedoController
+    ctrl = TorpedoController()
+    cfg_a, cfg_b = ctrl.make_no_vs_with_current_cfgs()
+    assert cfg_a['V_c'] == 0.0
+    assert cfg_b['V_c'] == 0.5
+    assert cfg_a['label'] == 'Sem corrente'
+    assert 'Com corrente' in cfg_b['label']
+
+
+def test_build_compare_instance_returns_torpedo(mvc):
+    """build_compare_instance constrói uma instância torpedo configurada."""
+    from python_vehicle_simulator.vehicles.torpedo import torpedo as torp
+    ctrl, _, _ = mvc
+    cfg = {'label': 'X', 'control_mode': 'depthHeadingAutopilot',
+           'ref_z': 25.0, 'ref_psi': 30.0, 'V_c': 0.3, 'beta_c_deg': 10.0}
+    veh = ctrl.build_compare_instance(cfg)
+    assert isinstance(veh, torp)
+    assert abs(veh.ref_z - 25.0) < 1e-9
+    assert abs(veh.V_c - 0.3) < 1e-9
+
+
+def test_no_vs_with_current_button_creates_two_sims(ab_mvc, tmp_path,
+                                                    monkeypatch):
+    """Clicar 'Comparar Sem/Com Corrente' produz 2 entradas no _sim_store."""
+    ctrl, gui, app, _fake = ab_mvc
+    monkeypatch.setattr(ctrl, '_DEFAULT_COMPARE_DIR', tmp_path)
+    n_before = len(ctrl.get_store())
+    received: list = []
+    ctrl.comparison_ready.connect(
+        lambda a, b: received.append((a['label'], b['label'])))
+    gui._launch_no_vs_with_current()
+    app.processEvents()
+    n_after = len(ctrl.get_store())
+    assert n_after == n_before + 2
+    assert len(received) == 1
+    assert received[0] == ('Sem corrente', 'Com corrente V_c=0.5')
+
+
+def test_compare_writes_two_csvs(ab_mvc, tmp_path, monkeypatch):
+    """register_comparison_results escreve 2 CSVs num directório dado."""
+    ctrl, gui, app, _fake = ab_mvc
+    monkeypatch.setattr(ctrl, '_DEFAULT_COMPARE_DIR', tmp_path)
+    gui._launch_no_vs_with_current()
+    app.processEvents()
+    csvs = sorted(tmp_path.glob('comparacao_*_*.csv'))
+    assert len(csvs) == 2
+    # cada CSV tem header com '# label = ...' (params snapshot)
+    for csv_path in csvs:
+        content = csv_path.read_text(encoding='utf-8').splitlines()
+        assert any(line.startswith('#') for line in content)
+        assert any(line.startswith('t_s,') for line in content)
+
+
+def test_compare_dialog_returns_two_cfgs(mvc):
+    """CompareScenariosDialog produz 2 dicts com chaves esperadas."""
+    from python_vehicle_simulator.gui.torpedo_gui import CompareScenariosDialog
+    _, gui, _ = mvc
+    view = gui._controller.get_view_state()
+    dlg = CompareScenariosDialog(view, parent=gui)
+    cfg_a, cfg_b = dlg.get_cfgs()
+    for cfg in (cfg_a, cfg_b):
+        assert {'label', 'control_mode', 'ref_z', 'ref_psi',
+                'V_c', 'beta_c_deg', 'current_model', 'overrides'} <= set(cfg)
+    dlg.close()
+
+
+def test_drag_curve_widget_reacts_to_Cd_change(mvc):
+    """DragCurveWidget tem update_plot ligada a params_updated; a curva muda
+    quando Cd muda (verificado pela primeira linha do plot)."""
+    ctrl, gui, app = mvc
+    ax_before = gui._drag_curve_widget._fig.axes
+    line_before = ax_before[0].lines[0].get_ydata().copy() if ax_before else None
+    ctrl.update_param('Cd', 0.30)
+    app.processEvents()
+    ax_after = gui._drag_curve_widget._fig.axes
+    line_after = ax_after[0].lines[0].get_ydata()
+    assert line_before is not None
+    # Cd diminuiu ⇒ força de arrasto diminuiu para mesmo U
+    import numpy as np
+    assert np.max(line_after) < np.max(line_before)
+
+
+def test_control_response_widget_reacts_to_wn_change(mvc):
+    """ControlResponseWidget repinta quando wn_d_z muda — a curva é diferente."""
+    ctrl, gui, app = mvc
+    line_before = gui._control_response_widget._fig.axes[0].lines[0]\
+        .get_ydata().copy()
+    ctrl.update_param('wn_d_z', 1.5)
+    app.processEvents()
+    line_after = gui._control_response_widget._fig.axes[0].lines[0].get_ydata()
+    import numpy as np
+    # Frequência maior ⇒ subida mais rápida ⇒ diferença significativa entre curvas
+    assert np.max(np.abs(line_after - line_before)) > 0.05
+
+
+def test_analise_tab_present_with_two_widgets(mvc):
+    """Tab 'Análise' existe e contém DragCurveWidget e ControlResponseWidget."""
+    from python_vehicle_simulator.gui.torpedo_viz import (
+        DragCurveWidget, ControlResponseWidget)
+    _, gui, _ = mvc
+    right = gui._right_panel
+    idx = next(i for i in range(right.count())
+               if right.tabText(i) == 'Análise')
+    page = right.widget(idx)
+    assert page.findChild(DragCurveWidget) is not None
+    assert page.findChild(ControlResponseWidget) is not None

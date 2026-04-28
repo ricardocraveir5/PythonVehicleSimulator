@@ -47,22 +47,43 @@ class SimulationThread(QThread):
     Sinais
     ------
     finished(simTime, simData) — emitido quando a simulação termina com sucesso
-    error(mensagem)            — emitido se ocorrer uma excepção
+                                  (não é emitido quando cancelada via cancel()).
+    error(mensagem)            — emitido se ocorrer uma excepção.
+    cancelled()                — emitido quando a thread foi abortada via cancel().
+
+    Etapa 4+ — método cancel() permite interromper cooperativamente a
+    simulação a partir da UI (botão "Parar"). A flag é consultada no
+    início de cada iteração de simulate().
     """
 
-    finished = pyqtSignal(object, object)
-    error    = pyqtSignal(str)
+    finished  = pyqtSignal(object, object)
+    error     = pyqtSignal(str)
+    cancelled = pyqtSignal()
 
     def __init__(self, vehicle, N: int, sampleTime: float, parent=None):
         super().__init__(parent)
         self._vehicle    = vehicle
         self._N          = N
         self._sampleTime = sampleTime
+        self._cancel_flag = False
+
+    def cancel(self):
+        """Sinaliza à thread que aborte na próxima iteração."""
+        self._cancel_flag = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancel_flag
 
     def run(self):
         try:
             from python_vehicle_simulator.lib.mainLoop import simulate
-            simTime, simData = simulate(self._N, self._sampleTime, self._vehicle)
+            simTime, simData = simulate(
+                self._N, self._sampleTime, self._vehicle,
+                is_cancelled=lambda: self._cancel_flag,
+            )
+            if self._cancel_flag:
+                self.cancelled.emit()
+                return
             self.finished.emit(simTime, simData)
         except Exception as exc:                       # noqa: BLE001
             self.error.emit(str(exc))
@@ -830,3 +851,102 @@ class ComparativeWidget(QWidget):
             f"Comparação: {label_A} vs {label_B}")
         self._fig.tight_layout(pad=1.2)
         self._canvas.draw()
+
+
+# ---------------------------------------------------------------------------
+# Etapa 4+ — Gráficos analíticos dinâmicos (sem simular)
+# ---------------------------------------------------------------------------
+
+class DragCurveWidget(QWidget):
+    """
+    Curva analítica F_drag(U) = 0.5 · ρ · CD_0 · S · U² (componente parasita,
+    Fossen 2021 §8.4). Actualiza-se sempre que params_updated emite, sem
+    necessidade de simular. Útil para visualizar o efeito de Cd, L e diam
+    sobre a força de arrasto.
+    """
+
+    _U_MAX = 3.0       # m/s — gama da velocidade de avanço
+    _RHO   = 1026.0    # kg/m³ — densidade da água do mar (igual a torpedo.py)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fig = Figure(figsize=(5, 3), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._canvas)
+
+    def update_plot(self, params: dict):
+        """Redesenha a curva consoante CD_0, L e diam actuais."""
+        CD_0 = float(params.get('CD_0', params.get('Cd', 0.42)))
+        L    = float(params.get('L', 1.6))
+        diam = float(params.get('diam', 0.19))
+        S    = math.pi * (diam / 2.0) ** 2  # área da secção transversal
+
+        u = np.linspace(0.0, self._U_MAX, 200)
+        F = 0.5 * self._RHO * CD_0 * S * u ** 2
+
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+        ax.plot(u, F, color='C0', linewidth=1.5,
+                label=f'CD_0={CD_0:.4f}  S={S*1e4:.1f} cm²')
+        ax.set_xlabel('U — velocidade de avanço (m/s)')
+        ax.set_ylabel('F_drag parasita (N)')
+        ax.set_title('Curva analítica de arrasto')
+        ax.grid(True, linestyle=':', alpha=0.5)
+        ax.legend(loc='upper left', fontsize='small')
+        self._canvas.draw_idle()
+
+
+class ControlResponseWidget(QWidget):
+    """
+    Resposta degrau analítica do laço de profundidade — modelo de
+    referência de 2.ª ordem `wn_d_z` e `zeta_d`. Ajuda o utilizador a
+    perceber tempo de subida e overshoot sem precisar de simular.
+    """
+
+    _T_MAX = 30.0  # s — janela temporal mostrada
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fig = Figure(figsize=(5, 3), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._canvas)
+
+    def update_plot(self, params: dict):
+        """
+        Resposta degrau unitário do sistema de 2.ª ordem
+            G(s) = wn² / (s² + 2·ζ·wn·s + wn²)
+        com `wn = wn_d_z` e `ζ = zeta_d`. Cobre os 3 regimes (sub-, crítico,
+        super-amortecido) com forma fechada.
+        """
+        wn   = float(params.get('wn_d_z', 0.5))
+        zeta = float(params.get('zeta_d', 1.0))
+
+        t = np.linspace(0.0, self._T_MAX, 400)
+        if zeta < 1.0:
+            wd = wn * math.sqrt(max(1.0 - zeta * zeta, 1e-12))
+            phi = math.atan2(math.sqrt(max(1.0 - zeta * zeta, 1e-12)), zeta)
+            y = 1.0 - (np.exp(-zeta * wn * t) / math.sqrt(
+                max(1.0 - zeta * zeta, 1e-12))) * np.sin(wd * t + phi)
+        elif abs(zeta - 1.0) < 1e-9:
+            y = 1.0 - np.exp(-wn * t) * (1.0 + wn * t)
+        else:
+            r1 = -wn * (zeta - math.sqrt(zeta * zeta - 1.0))
+            r2 = -wn * (zeta + math.sqrt(zeta * zeta - 1.0))
+            y = 1.0 + (r2 * np.exp(r1 * t) - r1 * np.exp(r2 * t)) / (r1 - r2)
+
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+        ax.plot(t, y, color='C2', linewidth=1.5,
+                label=f'wn={wn:.3f} rad/s  ζ={zeta:.2f}')
+        ax.axhline(1.0, color='red', linestyle='--', linewidth=0.7)
+        ax.set_xlabel('Tempo (s)')
+        ax.set_ylabel('Resposta (—)')
+        ax.set_title('Resposta degrau analítica do modelo de profundidade')
+        ax.set_ylim(-0.05, 1.6)
+        ax.grid(True, linestyle=':', alpha=0.5)
+        ax.legend(loc='lower right', fontsize='small')
+        self._canvas.draw_idle()

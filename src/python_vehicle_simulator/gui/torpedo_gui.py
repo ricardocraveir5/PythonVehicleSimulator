@@ -35,7 +35,8 @@ from python_vehicle_simulator.lib.environment import (
 
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
                           TorpedoVizWidget, TorpedoControlsWidget,
-                          ComparativeWidget, Etapa3GraphsWidget)
+                          ComparativeWidget, Etapa3GraphsWidget,
+                          DragCurveWidget, ControlResponseWidget)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
@@ -118,6 +119,154 @@ class CurrentProfileWidget(QWidget):
         self._canvas.draw_idle()
 
 
+class CompareScenariosDialog(QDialog):
+    """
+    Etapa 4+ — Diálogo modal para configurar 2 cenários de simulação
+    lado a lado. Cada coluna tem rótulo editável e overrides minimalistas
+    (Cd, V_c, β_c em graus, ref_z, ref_psi) + selector de modelo de
+    corrente (Constante / com perfil pré-definido).
+
+    O propósito é deixar o utilizador comparar variações sem reconfigurar
+    a GUI principal — todos os outros parâmetros (ganhos, geometria, etc.)
+    são herdados do estado actual do controller.
+    """
+
+    _CURRENT_OPTIONS = ['Constante', 'Linear', 'Lei 1/7',
+                        'Logarítmico', 'Gauss-Markov']
+
+    # Mapeamento "tipo" → instância de CurrentModel a partir das chaves
+    # actuais do view_state. Reproduz a lógica de
+    # TorpedoController._build_current_model em modo simplificado.
+    @staticmethod
+    def _build_model_from(tipo: str, view: dict, V_c_override: float,
+                          beta_c_deg_override: float):
+        from python_vehicle_simulator.lib.environment import (
+            LinearProfile, PowerLawProfile, LogarithmicProfile,
+            GaussMarkovCurrent,
+        )
+        beta_c_rad = float(beta_c_deg_override) * (math.pi / 180.0)
+        if tipo == 'Constante':
+            return None  # caminho legado V_c/β_c
+        if tipo == 'Linear':
+            return LinearProfile(view['current_V_surface'],
+                                 view['current_z_ref'], beta_c_rad)
+        if tipo == 'Lei 1/7':
+            return PowerLawProfile(view['current_V_surface'],
+                                   view['current_z_ref'], beta_c_rad)
+        if tipo == 'Logarítmico':
+            return LogarithmicProfile(
+                V_star=view['current_V_star'], z_0=view['current_z_0'],
+                beta_c=beta_c_rad, kappa=view['current_kappa'])
+        if tipo == 'Gauss-Markov':
+            return GaussMarkovCurrent(
+                mu=view['current_mu'], sigma=view['current_sigma'],
+                V_c0=view['current_Vc0'], beta_c=beta_c_rad,
+                rng_seed=int(view['current_seed']))
+        return None
+
+    def __init__(self, view_state: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Comparar 2 Cenários")
+        self.setMinimumSize(640, 380)
+        self._view = dict(view_state)
+
+        outer = QVBoxLayout(self)
+        cols = QHBoxLayout()
+        outer.addLayout(cols)
+
+        self._col_a_widgets = self._build_column(cols, "A", "Cenário A")
+        self._col_b_widgets = self._build_column(cols, "B", "Cenário B")
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "Correr Comparação")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+    def _build_column(self, parent_layout: QHBoxLayout, suffix: str,
+                       default_label: str) -> dict:
+        """Cria a coluna A ou B; devolve dict de widgets para leitura."""
+        box = QGroupBox(f"Cenário {suffix}")
+        form = QFormLayout(box)
+
+        label_edit = QDoubleSpinBox()  # placeholder; substituído por QLineEdit
+        # Usamos QComboBox editável só para evitar acrescentar QLineEdit ao
+        # import; aceita texto livre.
+        from PyQt6.QtWidgets import QLineEdit
+        label_edit = QLineEdit(default_label)
+        form.addRow("Rótulo:", label_edit)
+
+        # Overrides numéricos
+        sb_cd = QDoubleSpinBox()
+        sb_cd.setRange(0.1, 0.5); sb_cd.setSingleStep(0.01)
+        sb_cd.setDecimals(3); sb_cd.setValue(self._view.get('Cd', 0.42))
+        form.addRow("Cd:", sb_cd)
+
+        sb_z = QDoubleSpinBox()
+        sb_z.setRange(0.0, 100.0); sb_z.setSingleStep(1.0)
+        sb_z.setDecimals(2); sb_z.setValue(self._view.get('ref_z', 30.0))
+        form.addRow("ref_z (m):", sb_z)
+
+        sb_psi = QDoubleSpinBox()
+        sb_psi.setRange(-360.0, 360.0); sb_psi.setSingleStep(1.0)
+        sb_psi.setDecimals(1)
+        ref_psi_deg = self._view.get('ref_psi', 0.0)
+        sb_psi.setValue(ref_psi_deg)
+        form.addRow("ref_psi (°):", sb_psi)
+
+        sb_vc = QDoubleSpinBox()
+        sb_vc.setRange(0.0, 5.0); sb_vc.setSingleStep(0.01)
+        sb_vc.setDecimals(3); sb_vc.setValue(self._view.get('V_c', 0.0))
+        form.addRow("V_c (m/s):", sb_vc)
+
+        sb_beta = QDoubleSpinBox()
+        sb_beta.setRange(-180.0, 180.0); sb_beta.setSingleStep(1.0)
+        sb_beta.setDecimals(1)
+        sb_beta.setValue(self._view.get('beta_c_deg', 0.0))
+        form.addRow("β_c (°):", sb_beta)
+
+        cb_model = QComboBox()
+        cb_model.addItems(self._CURRENT_OPTIONS)
+        current_type = self._view.get('current_model_selected', 'Constante')
+        if current_type in self._CURRENT_OPTIONS:
+            cb_model.setCurrentText(current_type)
+        form.addRow("Modelo de corrente:", cb_model)
+
+        parent_layout.addWidget(box)
+        return {
+            'label':    label_edit,
+            'cd':       sb_cd,
+            'z':        sb_z,
+            'psi':      sb_psi,
+            'vc':       sb_vc,
+            'beta':     sb_beta,
+            'model':    cb_model,
+        }
+
+    def _read_cfg(self, w: dict) -> dict:
+        V_c = float(w['vc'].value())
+        beta = float(w['beta'].value())
+        tipo = w['model'].currentText()
+        cm = self._build_model_from(tipo, self._view, V_c, beta)
+        return {
+            'label':       w['label'].text() or 'Cenário',
+            'control_mode': 'depthHeadingAutopilot',
+            'ref_z':       float(w['z'].value()),
+            'ref_psi':     float(w['psi'].value()),
+            'V_c':         V_c,
+            'beta_c_deg':  beta,
+            'current_model': cm,
+            'overrides':   {'Cd': float(w['cd'].value())},
+        }
+
+    def get_cfgs(self) -> tuple[dict, dict]:
+        return self._read_cfg(self._col_a_widgets), \
+               self._read_cfg(self._col_b_widgets)
+
+
 class TorpedoGUI(QMainWindow):
     """
     Main window for the Torpedo AUV parameter editor.
@@ -179,14 +328,21 @@ class TorpedoGUI(QMainWindow):
         # Button row
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self._btn_reset       = QPushButton("Repor Defaults")
-        self._btn_validate    = QPushButton("Validar")
-        self._btn_simulate    = QPushButton("Simular")
-        self._btn_simulate_ab = QPushButton("Simular A e B (Etapa 3)")
-        self._btn_export_csv  = QPushButton("Exportar CSV")
+        self._btn_reset            = QPushButton("Repor Defaults")
+        self._btn_validate         = QPushButton("Validar")
+        self._btn_simulate         = QPushButton("Simular")
+        self._btn_stop             = QPushButton("Parar")
+        self._btn_stop.setEnabled(False)
+        self._btn_simulate_ab      = QPushButton("Simular A e B (Etapa 3)")
+        # Etapa 4+ — comparações com modelo de corrente
+        self._btn_compare_currents = QPushButton("Comparar Sem/Com Corrente")
+        self._btn_compare_custom   = QPushButton("Comparar 2 Cenários…")
+        self._btn_export_csv       = QPushButton("Exportar CSV")
         self._btn_export_csv.setEnabled(False)
         for btn in (self._btn_reset, self._btn_validate, self._btn_simulate,
-                    self._btn_simulate_ab, self._btn_export_csv):
+                    self._btn_stop, self._btn_simulate_ab,
+                    self._btn_compare_currents, self._btn_compare_custom,
+                    self._btn_export_csv):
             btn_layout.addWidget(btn)
         root_layout.addLayout(btn_layout)
 
@@ -197,6 +353,12 @@ class TorpedoGUI(QMainWindow):
         # Etapa 3 A/B run state machine
         self._ab_mode: str | None = None       # None | "A" | "B"
         self._ab_saved_duration: float | None = None
+
+        # Etapa 4+ — state machine para comparações personalizadas
+        self._compare_mode: str | None = None  # None | "A" | "B"
+        self._compare_cfgs: list[dict] | None = None
+        self._compare_results: list[dict] | None = None
+        self._compare_saved_duration: float | None = None
 
         # ------------------------------------------------------------------
         # Signal → slot connections
@@ -209,12 +371,24 @@ class TorpedoGUI(QMainWindow):
         # Etapa 4 — gráfico V_c(z) actualiza-se a cada params_updated
         self._controller.params_updated.connect(
             self._current_profile_widget.update_plot)
+        # Etapa 4+ — gráficos analíticos dinâmicos (sem simular)
+        self._controller.params_updated.connect(
+            self._drag_curve_widget.update_plot)
+        self._controller.params_updated.connect(
+            self._control_response_widget.update_plot)
 
         self._btn_reset.clicked.connect(self._controller.reset_to_defaults)
         self._btn_validate.clicked.connect(self._load_params)
         self._btn_simulate.clicked.connect(self._launch_simulation_dialog)
+        self._btn_stop.clicked.connect(self._on_stop_clicked)
         self._btn_simulate_ab.clicked.connect(self._launch_etapa3_ab_run)
+        self._btn_compare_currents.clicked.connect(
+            self._launch_no_vs_with_current)
+        self._btn_compare_custom.clicked.connect(
+            self._launch_compare_dialog)
         self._btn_export_csv.clicked.connect(self._export_last_csv)
+        # Etapa 4+ — sinal do controller quando 2 sims comparativas terminam
+        self._controller.comparison_ready.connect(self._on_comparison_ready)
 
         # ------------------------------------------------------------------
         # Initial parameter load
@@ -280,6 +454,18 @@ class TorpedoGUI(QMainWindow):
         # ── Tab 6: Análise Comparativa (Etapa 3) ──────────────────────────
         self._comparative_widget = ComparativeWidget()
         tabs.addTab(self._comparative_widget, "Comparação")
+
+        # ── Tab 7: Análise analítica (Etapa 4+) ───────────────────────────
+        # Widgets que reagem em tempo real a alterações de parâmetros, sem
+        # precisar de simular: curva de arrasto e resposta degrau analítica.
+        analise = QWidget()
+        analise_layout = QVBoxLayout(analise)
+        analise_layout.setContentsMargins(4, 4, 4, 4)
+        self._drag_curve_widget = DragCurveWidget()
+        self._control_response_widget = ControlResponseWidget()
+        analise_layout.addWidget(self._drag_curve_widget)
+        analise_layout.addWidget(self._control_response_widget)
+        tabs.addTab(analise, "Análise")
 
         return tabs
 
@@ -652,9 +838,10 @@ class TorpedoGUI(QMainWindow):
         self.statusBar().showMessage(
             f"A simular… (modo '{ctrl_mode}', {int(self._sim_duration)} s)")
         self._btn_simulate.setEnabled(False)
+        self._btn_stop.setEnabled(True)            # Etapa 4+ — botão Parar activo
 
-        # Etapa 3 A/B: passo mais fino replica fielmente o script (dt=0.02)
-        if self._ab_mode is not None:
+        # Etapa 3 A/B e Etapa 4+ compare: passo fino replica os scripts (dt=0.02)
+        if self._ab_mode is not None or self._compare_mode is not None:
             sample_time = 0.02
         else:
             sample_time = 0.05
@@ -663,7 +850,52 @@ class TorpedoGUI(QMainWindow):
         self._sim_thread = SimulationThread(vehicle, N, sample_time, parent=self)
         self._sim_thread.finished.connect(self._on_simulation_done)
         self._sim_thread.error.connect(self._on_simulation_error)
+        self._sim_thread.cancelled.connect(self._on_simulation_cancelled)
         self._sim_thread.start()
+
+    def _restore_buttons_after_sim(self):
+        """Etapa 4+ — Repõe estado de botões após simulação (sucesso/erro/cancel)."""
+        self._btn_simulate.setEnabled(True)
+        self._btn_stop.setEnabled(False)
+        self._btn_simulate_ab.setEnabled(True)
+        self._btn_compare_currents.setEnabled(True)
+        self._btn_compare_custom.setEnabled(True)
+        self._btn_reset.setEnabled(True)
+
+    def _on_stop_clicked(self):
+        """
+        Etapa 4+ — Cancela a simulação em curso (e, se a meio, qualquer
+        sequência A/B ou comparação personalizada). Reabilita os botões
+        e devolve o foco à tab Controladores.
+        """
+        if self._sim_thread is not None and self._sim_thread.isRunning():
+            self._sim_thread.cancel()
+            self._sim_thread.wait(2000)
+        # Limpar state machine A/B
+        if self._ab_mode is not None:
+            self._ab_mode = None
+            if self._ab_saved_duration is not None:
+                self._sim_duration = self._ab_saved_duration
+                self._ab_saved_duration = None
+        # Limpar state machine de comparação personalizada
+        if self._compare_mode is not None:
+            self._compare_mode = None
+            self._compare_cfgs = None
+            self._compare_results = None
+            if self._compare_saved_duration is not None:
+                self._sim_duration = self._compare_saved_duration
+                self._compare_saved_duration = None
+        self._restore_buttons_after_sim()
+        self._right_panel.setCurrentIndex(0)
+        self.statusBar().showMessage(
+            "Simulação cancelada — pronto para nova configuração.")
+
+    def _on_simulation_cancelled(self):
+        """Slot do sinal cancelled — apenas garante UI restaurada."""
+        try:
+            self._restore_buttons_after_sim()
+        except RuntimeError:
+            pass
 
     def _on_simulation_done(self, simTime, simData):
         """Recebe os dados da simulação e actualiza os widgets de visualização."""
@@ -681,6 +913,13 @@ class TorpedoGUI(QMainWindow):
             self._etapa3_widget.plot_etapa3(simTime, simData, dimU=5)
             # Tab 5 — sinais de controlo (Etapa 3)
             self._controls_widget.plot_controls(simTime, simData, dimU=5)
+
+            # Etapa 4+ — state machine compare (intercepta antes de armazenar
+            # via store_simulation: o controller faz isso em
+            # register_comparison_results no fim das duas pernas).
+            if self._compare_mode is not None:
+                self._handle_compare_step(simTime, simData)
+                return
 
             # Etapa 3 — store simulation for comparison / export
             if self._ab_mode == "A":
@@ -725,9 +964,7 @@ class TorpedoGUI(QMainWindow):
                     self._sim_duration = self._ab_saved_duration
                     self._ab_saved_duration = None
                 self._ab_mode = None
-                self._btn_simulate.setEnabled(True)
-                self._btn_simulate_ab.setEnabled(True)
-                self._btn_reset.setEnabled(True)
+                self._restore_buttons_after_sim()
                 self.statusBar().showMessage(
                     "Etapa 3 concluída — A e B a correr lado a lado em 3D; "
                     "tab Comparação também populada.")
@@ -735,6 +972,7 @@ class TorpedoGUI(QMainWindow):
 
             # Modo normal (single-sim)
             self._btn_simulate.setEnabled(True)
+            self._btn_stop.setEnabled(False)
             n_steps = len(simData)
             x_f, y_f, z_f = simData[-1, 0], simData[-1, 1], simData[-1, 2]
             self.statusBar().showMessage(
@@ -747,19 +985,31 @@ class TorpedoGUI(QMainWindow):
     def _on_simulation_error(self, msg: str):
         """Trata erros da thread de simulação."""
         try:
-            self._btn_simulate.setEnabled(True)
             if self._ab_mode is not None:
                 stage = self._ab_mode
                 if self._ab_saved_duration is not None:
                     self._sim_duration = self._ab_saved_duration
                     self._ab_saved_duration = None
                 self._ab_mode = None
-                self._btn_simulate_ab.setEnabled(True)
-                self._btn_reset.setEnabled(True)
+                self._restore_buttons_after_sim()
                 self.statusBar().showMessage(
                     f"Erro em Sim {stage}: {msg} — corrida A/B abortada.")
                 QMessageBox.warning(self, "Erro na Simulação A/B", msg)
                 return
+            if self._compare_mode is not None:
+                stage = self._compare_mode
+                if self._compare_saved_duration is not None:
+                    self._sim_duration = self._compare_saved_duration
+                    self._compare_saved_duration = None
+                self._compare_mode = None
+                self._compare_cfgs = None
+                self._compare_results = None
+                self._restore_buttons_after_sim()
+                self.statusBar().showMessage(
+                    f"Erro em Cenário {stage}: {msg} — comparação abortada.")
+                QMessageBox.warning(self, "Erro na Comparação", msg)
+                return
+            self._restore_buttons_after_sim()
             self.statusBar().showMessage(f"Erro na simulação: {msg}")
             QMessageBox.warning(self, "Erro na Simulação", msg)
         except RuntimeError:
@@ -890,6 +1140,151 @@ class TorpedoGUI(QMainWindow):
         self._controller.prepare_etapa3_simulation(0.42)
 
     # ----------------------------------------------------------------------
+    # Etapa 4+ — Comparações personalizadas e pré-definidas
+    # ----------------------------------------------------------------------
+
+    def _launch_no_vs_with_current(self):
+        """Atalho para a comparação pré-definida sem corrente vs com corrente."""
+        thread_busy = (self._sim_thread is not None
+                       and self._sim_thread.isRunning())
+        if (self._ab_mode is not None or self._compare_mode is not None
+                or thread_busy):
+            QMessageBox.information(
+                self, "Simulação em curso",
+                "Já existe uma simulação a correr — aguarde pelo fim.")
+            return
+        cfg_a, cfg_b = self._controller.make_no_vs_with_current_cfgs()
+        self._run_compare(cfg_a, cfg_b)
+
+    def _launch_compare_dialog(self):
+        """Abre o diálogo modal de configuração e dispara a comparação."""
+        thread_busy = (self._sim_thread is not None
+                       and self._sim_thread.isRunning())
+        if (self._ab_mode is not None or self._compare_mode is not None
+                or thread_busy):
+            QMessageBox.information(
+                self, "Simulação em curso",
+                "Já existe uma simulação a correr — aguarde pelo fim.")
+            return
+        # Pré-preencher com o estado actual do controller (ambos iguais)
+        view = self._controller.get_view_state()
+        dialog = CompareScenariosDialog(view, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        cfg_a, cfg_b = dialog.get_cfgs()
+        self._run_compare(cfg_a, cfg_b)
+
+    def _run_compare(self, cfg_a: dict, cfg_b: dict):
+        """
+        Etapa 4+ — Inicia a state machine de comparação personalizada.
+        Corre cfg_a primeiro; ao terminar, dispara cfg_b. No fim, chama
+        controller.register_comparison_results para guardar/exportar/emitir.
+        """
+        self._btn_simulate.setEnabled(False)
+        self._btn_simulate_ab.setEnabled(False)
+        self._btn_compare_currents.setEnabled(False)
+        self._btn_compare_custom.setEnabled(False)
+        self._btn_reset.setEnabled(False)
+
+        self._compare_saved_duration = self._sim_duration
+        self._sim_duration = 200.0
+        self._compare_mode = "A"
+        self._compare_cfgs = [cfg_a, cfg_b]
+        self._compare_results = []
+
+        self.statusBar().showMessage(
+            f"Comparação: a correr Cenário A — '{cfg_a.get('label', 'A')}'…")
+        try:
+            veh = self._controller.build_compare_instance(cfg_a)
+        except ValueError as e:
+            QMessageBox.warning(self, "Configuração inválida", str(e))
+            self._compare_mode = None
+            self._compare_cfgs = None
+            self._compare_results = None
+            self._restore_buttons_after_sim()
+            return
+        self._on_simulation_ready(veh)
+
+    def _handle_compare_step(self, simTime, simData):
+        """Avança a state machine de comparação (chamado de _on_simulation_done)."""
+        cfgs = self._compare_cfgs or []
+        results = self._compare_results
+        idx = 0 if self._compare_mode == "A" else 1
+        if results is None or idx >= len(cfgs):
+            return
+        cfg = cfgs[idx]
+        result = {
+            'simTime': simTime,
+            'simData': simData,
+            'vehicle': self._sim_thread._vehicle if self._sim_thread else None,
+            'label': cfg.get('label', f"Cenário {self._compare_mode}"),
+            'cfg': cfg,
+        }
+        results.append(result)
+
+        if self._compare_mode == "A":
+            # Dispara Cenário B
+            self._compare_mode = "B"
+            self.statusBar().showMessage(
+                f"Cenário A concluído — a correr Cenário B "
+                f"'{cfgs[1].get('label', 'B')}'…")
+            try:
+                veh_b = self._controller.build_compare_instance(cfgs[1])
+            except ValueError as e:
+                QMessageBox.warning(self, "Configuração inválida", str(e))
+                self._compare_mode = None
+                self._compare_cfgs = None
+                self._compare_results = None
+                self._restore_buttons_after_sim()
+                return
+            self._on_simulation_ready(veh_b)
+            return
+
+        # Cenário B terminou — registar e emitir comparison_ready
+        if self._compare_saved_duration is not None:
+            self._sim_duration = self._compare_saved_duration
+            self._compare_saved_duration = None
+        self._compare_mode = None
+        result_a, result_b = results[0], results[1]
+        self._compare_cfgs = None
+        self._compare_results = None
+        self._controller.register_comparison_results(result_a, result_b)
+
+    def _on_comparison_ready(self, result_a: dict, result_b: dict):
+        """
+        Etapa 4+ — Recebe ambos os resultados de uma comparação personalizada
+        e popula os widgets visuais (animação 3D dual + ComparativeWidget).
+        """
+        try:
+            params = self._controller.get_current_params()
+            L = params.get('L', 1.6)
+            diam = params.get('diam', 0.19)
+
+            self._comparative_widget.plot_comparison(
+                result_a['simTime'], result_a['simData'],
+                result_b['simTime'], result_b['simData'],
+                label_A=result_a['label'], label_B=result_b['label'])
+
+            self._viz_widget.run_dual_animation(
+                result_a['simTime'], result_a['simData'],
+                result_b['simTime'], result_b['simData'],
+                L, diam,
+                label_A=result_a['label'], label_B=result_b['label'])
+
+            self._right_panel.setCurrentIndex(1)  # Visualização 3D
+            self._restore_buttons_after_sim()
+            self._btn_export_csv.setEnabled(True)
+            csv_a = result_a.get('csv_path')
+            csv_b = result_b.get('csv_path')
+            self.statusBar().showMessage(
+                f"Comparação concluída — '{result_a['label']}' vs "
+                f"'{result_b['label']}'. CSVs: "
+                f"{csv_a.name if csv_a else '?'}, "
+                f"{csv_b.name if csv_b else '?'}")
+        except RuntimeError:
+            pass  # widget destruído (teardown de testes)
+
+    # ----------------------------------------------------------------------
     # Internal helpers
     # ----------------------------------------------------------------------
 
@@ -899,6 +1294,9 @@ class TorpedoGUI(QMainWindow):
         params = self._controller.get_view_state()
         self._on_params_updated(params)
         self._current_profile_widget.update_plot(params)
+        # Etapa 4+ — primeira pintura dos gráficos analíticos
+        self._drag_curve_widget.update_plot(params)
+        self._control_response_widget.update_plot(params)
         self.statusBar().showMessage(
             f"Pronto. ({len(params)} parâmetros carregados)")
 

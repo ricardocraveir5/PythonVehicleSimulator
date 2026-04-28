@@ -49,11 +49,14 @@ class TorpedoController(QObject):
     # Modos de controlo aceites pelo torpedo
     _VALID_MODES = frozenset({'depthHeadingAutopilot', 'stepInput'})
 
-    params_updated          = pyqtSignal(dict)
-    simulation_ready        = pyqtSignal(object)
-    validation_error        = pyqtSignal(str)
+    params_updated           = pyqtSignal(dict)
+    simulation_ready         = pyqtSignal(object)
+    validation_error         = pyqtSignal(str)
     param_dependency_updated = pyqtSignal(str, float)
-    store_updated           = pyqtSignal(list)        # Etapa 3: list of labels
+    store_updated            = pyqtSignal(list)        # Etapa 3: list of labels
+    # Etapa 4+ — payload (sim_a: dict, sim_b: dict) com simTime, simData,
+    # vehicle, label, csv_path e a configuração usada (cfg).
+    comparison_ready         = pyqtSignal(dict, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -320,6 +323,126 @@ class TorpedoController(QObject):
             return
 
         self.simulation_ready.emit(new_instance)
+
+    # ------------------------------------------------------------------
+    # Etapa 4+ — Comparação personalizada de 2 cenários
+    # ------------------------------------------------------------------
+
+    # Directoria por defeito para exportar CSVs comparativos.
+    # Resolução: gui/torpedo_controller.py → gui → python_vehicle_simulator → src → <repo>
+    _DEFAULT_COMPARE_DIR = Path(__file__).resolve().parents[3] / 'etapa4'
+
+    def build_compare_instance(self, cfg: dict):
+        """
+        Etapa 4+ — Constrói uma instância torpedo configurada para uma das
+        duas pernas de uma comparação. cfg suporta as chaves:
+
+            - 'label': str  (apenas usado para exibição; ignorado aqui)
+            - 'control_mode': 'depthHeadingAutopilot' | 'stepInput'
+            - 'ref_z', 'ref_psi', 'ref_n', 'V_c', 'beta_c_deg': overrides
+              dos parâmetros do construtor (em graus para psi e beta_c)
+            - 'current_model': CurrentModel | None  (já instanciado)
+            - 'overrides': dict  (parâmetros extra aplicados via set_from_dict
+              após construção e propagação dos params actuais)
+
+        Reusa a mesma lógica de prepare_simulation: parte do snapshot actual
+        do modelo e aplica overrides por cima. Devolve a instância (não
+        emite simulation_ready — é a GUI que decide quando lançar a thread).
+        """
+        p = self._model.get_all_params()
+
+        control_mode = cfg.get('control_mode', 'depthHeadingAutopilot')
+        if control_mode not in self._VALID_MODES:
+            raise ValueError(
+                f"Modo de controlo inválido: {control_mode!r}")
+
+        ref_z      = cfg.get('ref_z', p['ref_z'])
+        ref_psi    = cfg.get('ref_psi', p['ref_psi'])
+        ref_n      = cfg.get('ref_n', p['ref_n'])
+        V_c        = cfg.get('V_c', p['V_c'])
+        beta_c_deg = cfg.get('beta_c_deg',
+                             p['beta_c'] * (180.0 / math.pi))
+
+        veh = torpedo(
+            control_mode, ref_z, ref_psi, ref_n, V_c, beta_c_deg,
+            current_model=cfg.get('current_model'),
+        )
+
+        # Propagar todos os params actuais (excepto chaves do construtor)
+        constructor_keys = {
+            'ref_z', 'ref_psi', 'ref_n', 'V_c', 'beta_c',
+            'massa', 'T_heave', 'T_nomoto',
+            'fin_CL', 'fin_area', 'thruster_nMax',
+            'current_model_type',
+        }
+        base = {k: v for k, v in p.items() if k not in constructor_keys}
+        veh.set_from_dict(base)
+
+        overrides = cfg.get('overrides') or {}
+        if overrides:
+            # filtra chaves do construtor para evitar erro/redundância
+            safe = {k: v for k, v in overrides.items()
+                    if k not in constructor_keys}
+            veh.set_from_dict(safe)
+
+        for i, cl in enumerate(p['fin_CL']):
+            veh.set_fin_CL(i, cl)
+        for i, area in enumerate(p['fin_area']):
+            veh.set_fin_area(i, area)
+        veh.set_thruster_nMax(p['thruster_nMax'])
+
+        return veh
+
+    def make_no_vs_with_current_cfgs(self) -> tuple[dict, dict]:
+        """
+        Etapa 4+ — Factory para a comparação pré-definida "Sem vs Com
+        Corrente". Os 2 cfgs herdam do estado actual do controller (Cd,
+        ganhos, etc.) e diferem apenas no parâmetro V_c.
+        """
+        cfg_a = {
+            'label': 'Sem corrente',
+            'V_c': 0.0,
+            'beta_c_deg': 0.0,
+            'current_model': None,
+        }
+        cfg_b = {
+            'label': 'Com corrente V_c=0.5',
+            'V_c': 0.5,
+            'beta_c_deg': 0.0,
+            'current_model': None,
+        }
+        return cfg_a, cfg_b
+
+    def register_comparison_results(self, result_a: dict, result_b: dict,
+                                    out_dir: Path | None = None):
+        """
+        Etapa 4+ — Regista 2 resultados de simulação no _sim_store, exporta
+        CSVs com nome único (timestamp + sufixo A/B) e emite o sinal
+        comparison_ready com os dois resultados (incluindo csv_path).
+
+        Cada result é dict com chaves: 'simTime', 'simData', 'vehicle',
+        'label' (e qualquer extra do chamador). Os campos 'csv_path' e
+        'metadata' são adicionados aqui.
+        """
+        if out_dir is None:
+            out_dir = self._DEFAULT_COMPARE_DIR
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        for r, suffix in ((result_a, 'A'), (result_b, 'B')):
+            csv_path = out_dir / f"comparacao_{ts}_{suffix}.csv"
+            export_csv(csv_path, r['simTime'], r['simData'],
+                       params=r['vehicle'].get_all_params(), dimU=5)
+            r['csv_path'] = csv_path
+            self.store_simulation(
+                r['simTime'], r['simData'],
+                label=r.get('label', f"Comparação {suffix}"),
+                metadata={'comparison_ts': ts, 'side': suffix},
+            )
+
+        self.comparison_ready.emit(result_a, result_b)
 
     def reset_to_defaults(self):
         """
