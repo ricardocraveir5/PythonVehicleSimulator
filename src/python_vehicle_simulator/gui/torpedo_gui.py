@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QFormLayout, QDoubleSpinBox, QScrollArea,
     QDialog, QComboBox, QLabel, QDialogButtonBox,
     QMessageBox, QFileDialog, QStackedWidget,
+    QCheckBox,
 )
 
 from matplotlib.figure import Figure
@@ -36,7 +37,8 @@ from python_vehicle_simulator.lib.environment import (
 from .torpedo_viz import (SimulationThread, TorpedoStatesWidget,
                           TorpedoVizWidget, TorpedoControlsWidget,
                           ComparativeWidget, Etapa3GraphsWidget,
-                          DragCurveWidget, ControlResponseWidget)
+                          DragCurveWidget, ControlResponseWidget,
+                          LivePreviewWidget)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPalette, QColor
 
@@ -360,6 +362,17 @@ class TorpedoGUI(QMainWindow):
         self._compare_results: list[dict] | None = None
         self._compare_saved_duration: float | None = None
 
+        # Etapa 4+ Fase B — modo "preview ao vivo"
+        self._preview_thread: SimulationThread | None = None
+        self._preview_enabled: bool = False
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self._run_preview)
+        # Constantes da preview: 50 s @ dt=0.05 ⇒ 1000 passos
+        self._preview_N: int = 1000
+        self._preview_dt: float = 0.05
+        self._preview_debounce_ms: int = 800
+
         # ------------------------------------------------------------------
         # Signal → slot connections
         # ------------------------------------------------------------------
@@ -376,6 +389,9 @@ class TorpedoGUI(QMainWindow):
             self._drag_curve_widget.update_plot)
         self._controller.params_updated.connect(
             self._control_response_widget.update_plot)
+        # Etapa 4+ Fase B — debounce do preview ao vivo
+        self._controller.params_updated.connect(
+            self._on_params_changed_for_preview)
 
         self._btn_reset.clicked.connect(self._controller.reset_to_defaults)
         self._btn_validate.clicked.connect(self._load_params)
@@ -456,16 +472,28 @@ class TorpedoGUI(QMainWindow):
         tabs.addTab(self._comparative_widget, "Comparação")
 
         # ── Tab 7: Análise analítica (Etapa 4+) ───────────────────────────
-        # Widgets que reagem em tempo real a alterações de parâmetros, sem
-        # precisar de simular: curva de arrasto e resposta degrau analítica.
+        # Widgets que reagem em tempo real a alterações de parâmetros:
+        # - DragCurve e ControlResponse: analíticos (sem simular)
+        # - LivePreview (Fase B): simulação curta com debounce, toggleable
+        analise_scroll = QScrollArea()
+        analise_scroll.setWidgetResizable(True)
         analise = QWidget()
         analise_layout = QVBoxLayout(analise)
         analise_layout.setContentsMargins(4, 4, 4, 4)
         self._drag_curve_widget = DragCurveWidget()
         self._control_response_widget = ControlResponseWidget()
+        self._live_preview_widget = LivePreviewWidget()
         analise_layout.addWidget(self._drag_curve_widget)
         analise_layout.addWidget(self._control_response_widget)
-        tabs.addTab(analise, "Análise")
+        analise_layout.addWidget(self._live_preview_widget)
+        # Checkbox para activar/desactivar o preview ao vivo
+        self._chk_live_preview = QCheckBox(
+            "Preview ao vivo (50 s, dt=0.05) — actualiza após cada mudança")
+        self._chk_live_preview.setChecked(False)
+        self._chk_live_preview.toggled.connect(self._on_live_preview_toggled)
+        analise_layout.addWidget(self._chk_live_preview)
+        analise_scroll.setWidget(analise)
+        tabs.addTab(analise_scroll, "Análise")
 
         return tabs
 
@@ -1299,5 +1327,90 @@ class TorpedoGUI(QMainWindow):
         self._control_response_widget.update_plot(params)
         self.statusBar().showMessage(
             f"Pronto. ({len(params)} parâmetros carregados)")
+
+    # ----------------------------------------------------------------------
+    # Etapa 4+ Fase B — Live preview (simulação curta com debounce)
+    # ----------------------------------------------------------------------
+
+    def _on_live_preview_toggled(self, checked: bool):
+        """
+        Activa/desactiva o modo "Preview ao vivo". Quando desactivado,
+        cancela qualquer preview em curso e mostra placeholder no widget.
+        Quando activado, dispara uma primeira preview após o debounce.
+        """
+        self._preview_enabled = bool(checked)
+        if not self._preview_enabled:
+            self._preview_timer.stop()
+            if (self._preview_thread is not None
+                    and self._preview_thread.isRunning()):
+                self._preview_thread.cancel()
+                self._preview_thread.wait(500)
+            self._preview_thread = None
+            self._live_preview_widget.show_disabled()
+            self.statusBar().showMessage("Preview ao vivo desactivada.")
+        else:
+            self.statusBar().showMessage(
+                "Preview ao vivo activada — a aguardar parâmetros…")
+            self._preview_timer.start(self._preview_debounce_ms)
+
+    def _on_params_changed_for_preview(self, params: dict):
+        """
+        Slot ligado a params_updated. Se o modo preview está activo,
+        reinicia o debounce timer; uma preview a meio é cancelada para que
+        a próxima reflicta os parâmetros mais recentes sem competir.
+        """
+        if not self._preview_enabled:
+            return
+        if (self._preview_thread is not None
+                and self._preview_thread.isRunning()):
+            self._preview_thread.cancel()
+        self._preview_timer.start(self._preview_debounce_ms)
+
+    def _run_preview(self):
+        """
+        Disparado pelo debounce timer. Cria uma SimulationThread nova com
+        horizon curto (50 s, dt=0.05) e o vehicle preview do controller.
+        Erros são silenciados — a preview é "best effort".
+        """
+        if not self._preview_enabled:
+            return
+        if (self._preview_thread is not None
+                and self._preview_thread.isRunning()):
+            self._preview_thread.cancel()
+            self._preview_thread.wait(500)
+        try:
+            veh = self._controller.build_preview_vehicle()
+        except (ValueError, AttributeError):
+            return
+        self._preview_thread = SimulationThread(
+            veh, self._preview_N, self._preview_dt, parent=self)
+        self._preview_thread.finished.connect(self._on_preview_done)
+        try:
+            self._live_preview_widget.show_running()
+        except RuntimeError:
+            pass
+        self._preview_thread.start()
+
+    def _on_preview_done(self, simTime, simData):
+        """Slot do preview thread — pinta z(t) e u(t) no LivePreviewWidget."""
+        try:
+            self._live_preview_widget.update_from(simTime, simData)
+        except RuntimeError:
+            pass
+
+    def closeEvent(self, event):
+        """Etapa 4+ — Cancela threads (sim + preview) ao fechar a janela."""
+        try:
+            if (self._sim_thread is not None
+                    and self._sim_thread.isRunning()):
+                self._sim_thread.cancel()
+                self._sim_thread.wait(2000)
+            if (self._preview_thread is not None
+                    and self._preview_thread.isRunning()):
+                self._preview_thread.cancel()
+                self._preview_thread.wait(500)
+            self._preview_timer.stop()
+        finally:
+            super().closeEvent(event)
 
 

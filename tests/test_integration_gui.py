@@ -743,3 +743,73 @@ def test_analise_tab_present_with_two_widgets(mvc):
     page = right.widget(idx)
     assert page.findChild(DragCurveWidget) is not None
     assert page.findChild(ControlResponseWidget) is not None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Etapa 4+ Fase B — Live preview (simulação curta com debounce)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_live_preview_widget_in_analise_tab(mvc):
+    """LivePreviewWidget e checkbox de live preview existem na tab Análise."""
+    from python_vehicle_simulator.gui.torpedo_viz import LivePreviewWidget
+    _, gui, _ = mvc
+    right = gui._right_panel
+    idx = next(i for i in range(right.count())
+               if right.tabText(i) == 'Análise')
+    page = right.widget(idx)
+    assert page.findChild(LivePreviewWidget) is not None
+    assert hasattr(gui, '_chk_live_preview')
+    assert gui._chk_live_preview.isChecked() is False
+    assert gui._preview_enabled is False
+
+
+def test_live_preview_toggle_off_cancels_running_preview(mvc):
+    """Desactivar a checkbox cancela qualquer preview em curso e limpa estado."""
+    from unittest.mock import MagicMock
+    _, gui, _ = mvc
+    gui._chk_live_preview.setChecked(True)
+    assert gui._preview_enabled is True
+    fake = MagicMock()
+    fake.isRunning.return_value = True
+    gui._preview_thread = fake
+    gui._chk_live_preview.setChecked(False)
+    assert gui._preview_enabled is False
+    assert fake.cancel.called
+    assert gui._preview_thread is None
+
+
+def test_preview_cancelled_when_params_change_during_run(mvc):
+    """Quando params mudam com preview a correr, a actual é cancelada e o
+    debounce timer é reiniciado para arrancar uma nova com o estado fresco."""
+    from unittest.mock import MagicMock
+    _, gui, _ = mvc
+    gui._preview_enabled = True
+    fake_thread = MagicMock()
+    fake_thread.isRunning.return_value = True
+    gui._preview_thread = fake_thread
+    gui._on_params_changed_for_preview({'Cd': 0.30})
+    assert fake_thread.cancel.called
+    assert gui._preview_timer.isActive()
+
+
+def test_on_preview_done_delegates_to_widget(mvc):
+    """_on_preview_done chama LivePreviewWidget.update_from(simTime, simData)."""
+    from unittest.mock import MagicMock
+    import numpy as np
+    _, gui, _ = mvc
+    spy = MagicMock()
+    gui._live_preview_widget.update_from = spy
+    simTime = np.linspace(0, 1, 5).reshape(-1, 1)
+    simData = np.zeros((5, 24))
+    gui._on_preview_done(simTime, simData)
+    spy.assert_called_once()
+
+
+def test_params_change_with_preview_disabled_does_not_start_timer(mvc):
+    """Sem preview activa, alterações de params não devem despoletar o timer."""
+    ctrl, gui, app = mvc
+    gui._preview_enabled = False
+    gui._preview_timer.stop()
+    ctrl.update_param('Cd', 0.31)
+    app.processEvents()
+    assert gui._preview_timer.isActive() is False

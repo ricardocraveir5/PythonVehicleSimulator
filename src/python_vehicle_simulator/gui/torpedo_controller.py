@@ -393,6 +393,19 @@ class TorpedoController(QObject):
 
         return veh
 
+    def build_preview_vehicle(self):
+        """
+        Etapa 4+ — Constrói um torpedo "preview" com os parâmetros e modelo
+        de corrente actuais, para usar em simulações curtas em background
+        (debounce + actualização do LivePreviewWidget). Reusa
+        build_compare_instance com cfg vazia + current_model actual.
+        """
+        cfg = {
+            'control_mode': 'depthHeadingAutopilot',
+            'current_model': self._build_current_model(),
+        }
+        return self.build_compare_instance(cfg)
+
     def make_no_vs_with_current_cfgs(self) -> tuple[dict, dict]:
         """
         Etapa 4+ — Factory para a comparação pré-definida "Sem vs Com

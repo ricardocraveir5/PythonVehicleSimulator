@@ -950,3 +950,74 @@ class ControlResponseWidget(QWidget):
         ax.grid(True, linestyle=':', alpha=0.5)
         ax.legend(loc='lower right', fontsize='small')
         self._canvas.draw_idle()
+
+
+class LivePreviewWidget(QWidget):
+    """
+    Etapa 4+ — Preview ao vivo: 2 subplots (z(t) e u(t)) actualizados a
+    partir de simulações curtas (50 s, dt=0.05 ⇒ ~0.5 s) que correm em
+    background com debounce de 800 ms a cada alteração de parâmetro.
+
+    Permite ao investigador ver o efeito de um ganho ou parâmetro físico
+    quase instantaneamente, sem precisar de premir "Simular". A precisão
+    fica limitada pela amostragem mais grosseira; para a sim completa de
+    200 s usa-se o botão "Simular".
+
+    A actualização é gerida pela GUI (debounce + cancelamento da preview
+    anterior). Este widget é apenas o renderer.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fig = Figure(figsize=(5, 4), tight_layout=True)
+        self._canvas = FigureCanvasQTAgg(self._fig)
+        self._info = QLabel(
+            "Preview desactivada — activa a checkbox em baixo para ver "
+            "z(t) e u(t) a actualizar com cada alteração.")
+        self._info.setStyleSheet("color: #555; padding: 2px;")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._info)
+        layout.addWidget(self._canvas)
+        self._show_placeholder()
+
+    def _show_placeholder(self):
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+        ax.text(0.5, 0.5, "Preview ao vivo desactivada",
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=11, color='gray')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        self._canvas.draw_idle()
+
+    def show_disabled(self):
+        self._info.setText(
+            "Preview desactivada — activa a checkbox em baixo para ver "
+            "z(t) e u(t) a actualizar com cada alteração.")
+        self._show_placeholder()
+
+    def show_running(self):
+        self._info.setText("A correr preview… (50 s, dt=0.05)")
+
+    def update_from(self, simTime, simData):
+        """Pinta z(t) e u(t) com base em (simTime, simData) recém-simulados."""
+        t = simTime[:, 0] if simTime.ndim == 2 else simTime
+        z = simData[:, 2]
+        u = simData[:, 6]
+        self._fig.clear()
+        ax1 = self._fig.add_subplot(211)
+        ax1.plot(t, z, color='C0', linewidth=1.2)
+        ax1.set_ylabel('z (m)')
+        ax1.invert_yaxis()
+        ax1.grid(True, linestyle=':', alpha=0.5)
+        ax1.set_title('Preview ao vivo — profundidade e avanço')
+        ax2 = self._fig.add_subplot(212, sharex=ax1)
+        ax2.plot(t, u, color='C2', linewidth=1.2)
+        ax2.set_xlabel('Tempo (s)')
+        ax2.set_ylabel('u (m/s)')
+        ax2.grid(True, linestyle=':', alpha=0.5)
+        self._canvas.draw_idle()
+        dt_eff = (t[-1] / max(len(t) - 1, 1)) if len(t) > 1 else 0.0
+        self._info.setText(
+            f"Preview actualizada — {len(t)} amostras, dt≈{dt_eff:.3f} s")
