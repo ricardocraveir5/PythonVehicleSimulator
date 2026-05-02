@@ -113,3 +113,8 @@ GitHub.sublime-settings
 3D_animation.gif
 
 .DS_Store
+
+# Simulation output files (generated — do not track)
+*.csv
+*.json
+
